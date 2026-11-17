@@ -33,13 +33,14 @@ dupes=$( (echo "PORT=$GATUS_PORT"; echo "PORT=$MLFLOW_PORT"; echo "PORT=$NOTIFY_
 [[ -z $dupes ]] || die "port used twice in apps/*.env (or by gatus/mlflow/notify): $dupes"
 
 step "files: $HAWK, /usr/local/bin/hawk"
-notify_sum() { [[ -d $HAWK/notify ]] || return 0; tar -C "$HAWK" -cf - notify | sha256sum; }
+# COMMIT by content: it is rewritten every run, and hawk-notifyd reports it on /healthz.
+notify_sum() { [[ -d $HAWK/notify ]] || return 0; { tar -C "$HAWK" -cf - notify; cat "$HAWK/COMMIT" 2>/dev/null || true; } | sha256sum; }
 restart_notify=0
 before=$(notify_sum)
 rsync -a --delete --exclude .git --exclude hawk.env --exclude node_modules "$HERE/" "$HAWK/"
-[[ $(notify_sum) == "$before" ]] || restart_notify=1
 git -c safe.directory="$HERE" -C "$HERE" rev-parse HEAD >"$HAWK/COMMIT" 2>/dev/null || echo unknown >"$HAWK/COMMIT"
 chown -R root:root "$HAWK"
+[[ $(notify_sum) == "$before" ]] || restart_notify=1
 ln -sfn "$HAWK/bin/hawk" /usr/local/bin/hawk
 
 # hawk-update deploys GitHub main (pnpm ship runs it). The user who ran sudo may run it with no password.
@@ -197,10 +198,6 @@ systemctl enable --now hawk-heartbeat.timer >/dev/null
 systemctl enable --now hawk-status.timer >/dev/null
 systemctl enable --now mlflow-backup.timer >/dev/null
 systemctl start hawk-status
-systemctl enable hawk-notifyd >/dev/null
-if ((restart_notify)) || ! systemctl is-active --quiet hawk-notifyd; then systemctl restart hawk-notifyd; fi
-for _ in $(seq 1 30); do curl -fsS -m 2 "http://127.0.0.1:$NOTIFY_PORT/healthz" >/dev/null 2>&1 && break; sleep 1; done
-curl -fsS -m 2 "http://127.0.0.1:$NOTIFY_PORT/healthz" >/dev/null 2>&1 || die "hawk-notifyd did not start. See journalctl -u hawk-notifyd"
 systemctl enable mlflow >/dev/null
 if ((restart_mlflow)) || ! systemctl is-active --quiet mlflow; then systemctl restart mlflow; fi
 for _ in $(seq 1 60); do curl -fsS -m 2 "http://127.0.0.1:$MLFLOW_PORT/health" >/dev/null 2>&1 && break; sleep 1; done
@@ -214,6 +211,12 @@ curl -fsS -m 2 "http://127.0.0.1:$MLFLOW_PORT/health" >/dev/null 2>&1 || die "ml
 systemctl enable gatus >/dev/null
 if ((restart_gatus)) || ! systemctl is-active --quiet gatus; then systemctl restart gatus; fi
 systemctl is-active --quiet gatus || die "gatus did not start. See journalctl -u gatus"
+
+# Last, so a hawk-notifyd failure does not skip mlflow, caddy or gatus.
+systemctl enable hawk-notifyd >/dev/null
+if ((restart_notify)) || ! systemctl is-active --quiet hawk-notifyd; then systemctl restart hawk-notifyd; fi
+for _ in $(seq 1 30); do curl -fsS -m 2 "http://127.0.0.1:$NOTIFY_PORT/healthz" >/dev/null 2>&1 && break; sleep 1; done
+curl -fsS -m 2 "http://127.0.0.1:$NOTIFY_PORT/healthz" >/dev/null 2>&1 || die "hawk-notifyd did not start. See journalctl -u hawk-notifyd"
 
 cat <<EOF
 
