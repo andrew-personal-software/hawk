@@ -15,7 +15,7 @@ export function toCore(json: unknown): { ok: true; core: Core } | Invalid {
   if (json === null || typeof json !== 'object' || Array.isArray(json)) return bad('', 'expected a JSON object')
   const j = json as Record<string, unknown>
 
-  if (!str(j.topic, 1, 200) || !TOPIC.test(j.topic as string)) return bad('topic', 'must be dotted lowercase segments, e.g. app.event')
+  if (!str(j.topic, 1, 250) || !TOPIC.test(j.topic as string)) return bad('topic', 'must be dotted lowercase segments, e.g. app.event')
   if (!str(j.title, 1, 150)) return bad('title', 'must be a string of 1-150 characters')
   if (j.body !== undefined && !str(j.body, 0, 40000)) return bad('body', 'must be a string of at most 40000 characters')
   if (j.level !== undefined && !LEVELS.includes(j.level as Level)) return bad('level', 'must be info, warn or error')

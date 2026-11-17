@@ -31,6 +31,11 @@ test('first failing field is reported', () => {
   ]
   for (const [input, field] of cases) assert.equal((toCore(input) as Invalid).field, field, JSON.stringify(input))
 })
+test('topic: 250 chars accepted, 251 rejected', () => {
+  const topic = (n: number) => 'a.' + 'b'.repeat(n - 2)
+  assert.equal(toCore({ ...ok, topic: topic(250) }).ok, true)
+  assert.equal((toCore({ ...ok, topic: topic(251) }) as Invalid).field, 'topic')
+})
 test('a 2000-char link is accepted', () => {
   const link = 'https://x.y/' + 'a'.repeat(1988)
   assert.equal(link.length, 2000)

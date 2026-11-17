@@ -71,7 +71,7 @@ Listens on `127.0.0.1:3402` only. No auth (box-local).
 ```
 POST /v1/messages
 {
-  "topic":  "sparrow.task.status",  // required. <service>.<event>, lowercase, [a-z0-9.-]
+  "topic":  "sparrow.task.status",  // required. <service>.<event>, lowercase, [a-z0-9.-], max 250 chars
   "title":  "HAWK-8: in-progress → done", // required. Plain text, 1–150 chars
   "body":   "markdown",              // optional. Max 40,000 chars
   "level":  "info",                  // optional. info | warn | error. Default info
@@ -248,7 +248,8 @@ fenced code, `[text](url)`, bare URLs, `-`/`*`/`1.` lists, `>` quotes. Anything 
 - **Slack**: `text` = title (notification preview). `blocks` = a section with the title (bold) and a `level`
   prefix (`:warning:` warn, `:rotating_light:` error), the body as `mrkdwn` sections split at paragraph breaks
   into chunks of ≤3000 chars, and `link` as a last section. Max 50 blocks per message; more is split into more
-  messages, sent one after another. Convert: `**x**`→`*x*`, `*x*`/`_x_`→`_x_`, `[t](u)`→`<u|t>`, headings → bold
+  messages, sent one after another 1 s apart, each titled `<title> (i/n)`, with the link in the last one. A failure
+  part-way returns that failure and the retry posts every part again, so earlier parts can repeat. Convert: `**x**`→`*x*`, `*x*`/`_x_`→`_x_`, `[t](u)`→`<u|t>`, headings → bold
   line, escape `&`, `<`, `>`.
 - **Discord** (later): markdown almost as is; split at 2000 chars.
 - **Email** is only the down alert: plain text from a fixed template, through Resend.

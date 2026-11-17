@@ -71,13 +71,18 @@ function pack(pieces: string[]): string[] {
 
 const section = (text: string) => ({ type: 'section' as const, text: { type: 'mrkdwn' as const, text } })
 
-export function render(msg: Core): SlackPayload {
-  const blocks = [section(`${PREFIX[msg.level]}*${esc(msg.title)}*`)]
-  let body = pack(parse(msg.body ?? '').map(block))
-  if (body.length > MAX_BODY_SECTIONS) body = [...body.slice(0, MAX_BODY_SECTIONS - 1), '_(truncated)_']
-  blocks.push(...body.map(section))
-  if (msg.link) blocks.push(section(`<${encodeUrl(msg.link)}|Open>`))
-  return { text: esc(msg.title), blocks }
+// One payload per 48 body sections (title + 48 + link ≤ 50 blocks). Parts are numbered when there are several.
+export function render(msg: Core): SlackPayload[] {
+  const body = pack(parse(msg.body ?? '').map(block))
+  const chunks: string[][] = []
+  for (let i = 0; i < body.length; i += MAX_BODY_SECTIONS) chunks.push(body.slice(i, i + MAX_BODY_SECTIONS))
+  if (chunks.length === 0) chunks.push([])
+  return chunks.map((secs, i) => {
+    const part = chunks.length > 1 ? ` (${i + 1}/${chunks.length})` : ''
+    const blocks = [section(`${PREFIX[msg.level]}*${esc(msg.title)}*${part}`), ...secs.map(section)]
+    if (msg.link && i === chunks.length - 1) blocks.push(section(`<${encodeUrl(msg.link)}|Open>`))
+    return { text: esc(msg.title) + part, blocks }
+  })
 }
 
 export function mapResponse(status: number, retryAfter: string | null, body: unknown): Result {
@@ -95,29 +100,43 @@ export function mapResponse(status: number, retryAfter: string | null, body: unk
   return { kind: 'permanent', error }
 }
 
-export function makeSlack(fetchImpl: typeof fetch = fetch): Platform {
+const PART_GAP_MS = 1000
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+// A failure after some parts were posted returns that failure; the retry posts every part again.
+export function makeSlack(fetchImpl: typeof fetch = fetch, sleep: (ms: number) => Promise<void> = wait): Platform {
+  async function post(body: string, token: string | undefined): Promise<Result> {
+    try {
+      const res = await fetchImpl('https://slack.com/api/chat.postMessage', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
+        body,
+        signal: AbortSignal.timeout(10_000),
+      })
+      return mapResponse(res.status, res.headers.get('retry-after'), await res.json().catch(() => null))
+    } catch (err) {
+      return { kind: 'transient', error: String(err) }
+    }
+  }
   return {
     name: 'slack',
     label: 'Slack',
     configured: (env) => typeof env.SLACK_BOT_TOKEN === 'string' && env.SLACK_BOT_TOKEN !== '',
     async send(msg, target, env) {
-      let body: string
+      let bodies: string[]
       try {
-        body = JSON.stringify({ channel: target, ...render(msg) })
+        bodies = render(msg).map((p) => JSON.stringify({ channel: target, ...p }))
       } catch (err) {
         return { kind: 'permanent', error: `render: ${err instanceof Error ? err.message : String(err)}` }
       }
-      try {
-        const res = await fetchImpl('https://slack.com/api/chat.postMessage', {
-          method: 'POST',
-          headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}`, 'content-type': 'application/json; charset=utf-8' },
-          body,
-          signal: AbortSignal.timeout(10_000),
-        })
-        return mapResponse(res.status, res.headers.get('retry-after'), await res.json().catch(() => null))
-      } catch (err) {
-        return { kind: 'transient', error: String(err) }
+      let ref: string | undefined
+      for (const [i, body] of bodies.entries()) {
+        if (i > 0) await sleep(PART_GAP_MS)
+        const r = await post(body, env.SLACK_BOT_TOKEN)
+        if (r.kind !== 'ok') return r
+        ref ??= r.ref
       }
+      return { kind: 'ok', ref }
     },
   }
 }
