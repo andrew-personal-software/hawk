@@ -23,11 +23,18 @@ test('first failing field is reported', () => {
     [{ ...ok, level: 'fatal' }, 'level'],
     [{ ...ok, link: 'ftp://a.b' }, 'link'],
     [{ ...ok, link: 'not a url' }, 'link'],
+    [{ ...ok, link: ['https://x.y'] }, 'link'],
+    [{ ...ok, link: 'https://x.y/' + 'a'.repeat(1989) }, 'link'],
     [{ ...ok, thread: '' }, 'thread'],
     [{ ...ok, key: 'k'.repeat(201) }, 'key'],
     [{ ...ok, title: 5 }, 'title'],
   ]
   for (const [input, field] of cases) assert.equal((toCore(input) as Invalid).field, field, JSON.stringify(input))
+})
+test('a 2000-char link is accepted', () => {
+  const link = 'https://x.y/' + 'a'.repeat(1988)
+  assert.equal(link.length, 2000)
+  assert.equal(toCore({ ...ok, link }).ok, true)
 })
 test('non-object input is invalid with field ""', () => {
   for (const v of [null, [], 'x', 3]) assert.deepEqual(toCore(v), { ok: false, field: '', message: 'expected a JSON object' })

@@ -1,12 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import type { Core } from '../src/core.ts'
 import { render, mapResponse, makeSlack } from '../src/platforms/slack.ts'
 import { platforms } from '../src/platforms/index.ts'
 import routes from '../routes.ts'
 
 test('render: title section with level prefix, body, link', () => {
   const p = render({ topic: 'a.b', title: 'T <1>', level: 'error', body: '**b** [x](https://u.v)', link: 'https://l.m' })
-  assert.equal(p.text, 'T <1>')
+  assert.equal(p.text, 'T &lt;1&gt;')
   assert.deepEqual(p.blocks.map((b) => b.text.text), [':rotating_light: *T &lt;1&gt;*', '*b* <https://u.v|x>', '<https://l.m|Open>'])
 })
 test('render: warn prefix, info none, heading → bold line, italic → _x_', () => {
@@ -69,6 +70,15 @@ test('send posts to chat.postMessage with the token; network error → transient
   assert.equal(ok.configured({}), false)
   assert.equal(ok.configured({ SLACK_BOT_TOKEN: '' }), false)
   assert.equal(ok.configured({ SLACK_BOT_TOKEN: 'x' }), true)
+})
+test('send: a render throw is permanent and never fetches', async () => {
+  let calls = 0
+  const s = makeSlack(async () => { calls++; return Response.json({ ok: true }) })
+  const poison = { topic: 'a.b', title: 'T', level: 'info', link: ['https://x.y'] } as unknown as Core
+  const r = await s.send(poison, '#c', { SLACK_BOT_TOKEN: 'x' })
+  assert.equal(r.kind, 'permanent')
+  assert.match((r as { error: string }).error, /^render: /)
+  assert.equal(calls, 0)
 })
 test('every platform in routes.ts has an adapter', () => {
   const names = new Set(platforms.map((p) => p.name))

@@ -16,8 +16,10 @@ const BACKOFF = [5, 15, 30, 60, 60].map((s) => s * 1000)
 const iso = (ms: number | null) => new Date(ms ?? 0).toISOString()
 const why = (r: Result) => ('error' in r ? r.error : r.kind)
 
-function save(d: WorkerDeps, prev: PlatformState['status'], s: PlatformState): void {
-  if (s.status !== prev) d.log(`notify: ${d.platform.name} ${s.status === 'up' ? 'up' : `down: ${s.reason}`}`)
+type Prev = Pick<PlatformState, 'status' | 'reason'>
+
+function save(d: WorkerDeps, prev: Prev, s: PlatformState): void {
+  if (s.status !== prev.status || s.reason !== prev.reason) d.log(`notify: ${d.platform.name} ${s.status === 'up' ? 'up' : `down: ${s.reason}`}`)
   saveState(d.db, s)
 }
 
@@ -44,8 +46,10 @@ async function notice(d: WorkerDeps, core: Core): Promise<void> {
 }
 
 async function deliver(d: WorkerDeps, s: PlatformState, row: DeliveryRow, now: number): Promise<void> {
-  const prev = s.status
-  const wasDown = prev === 'down'
+  const prev: Prev = { status: s.status, reason: s.reason }
+  const wasDown = prev.status === 'down'
+  // A send result after no_token is a new outage with a real reason, so it may alert again.
+  const afterNoToken = wasDown && s.reason === 'no_token'
   const n = wasDown ? queuedCount(d.db, d.platform.name) : 0
   const r = await d.platform.send(row.core, row.target, d.env)
   switch (r.kind) {
@@ -63,22 +67,26 @@ async function deliver(d: WorkerDeps, s: PlatformState, row: DeliveryRow, now: n
     }
     case 'retry_after':
       s.pausedUntil = now + r.seconds * 1000
+      s.failingSince = null
       break
     case 'transient':
       markRetry(d.db, row.id, now + BACKOFF[Math.min(row.attempts, 4)], r.error)
       s.failingSince ??= now
       if (s.status === 'up' && now - s.failingSince >= OUTAGE) Object.assign(s, { status: 'down', reason: r.error, downSince: now })
+      if (afterNoToken) Object.assign(s, { reason: r.error, downSince: now })
       if (s.status === 'down') s.nextProbeAt = now + PROBE
       break
     case 'auth':
       markRetry(d.db, row.id, now, r.error)
       s.status = 'down'
       s.reason = r.error
-      s.downSince ??= now
+      s.downSince = afterNoToken ? now : (s.downSince ?? now)
       s.nextProbeAt = now + PROBE
       break
     case 'permanent':
       markFailed(d.db, row.id, r.error)
+      s.failingSince = null
+      save(d, prev, s)
       d.log(`notify: ${d.platform.name} ${row.target} failed: ${r.error}`)
       if (row.target !== d.defaultTarget) {
         await notice(d, { topic: 'hawk.notify', level: 'warn', title: `could not post ${row.core.topic} to ${row.target}: ${r.error}` })
@@ -94,7 +102,7 @@ export async function tick(d: WorkerDeps): Promise<number> {
   const s = getState(d.db, d.platform.name)
   if (!d.platform.configured(d.env)) {
     if (s.status !== 'down' || s.reason !== 'no_token') {
-      const prev = s.status
+      const prev: Prev = { status: s.status, reason: s.reason }
       Object.assign(s, { status: 'down', reason: 'no_token', downSince: now })
       save(d, prev, s)
     }

@@ -21,8 +21,8 @@ export function toCore(json: unknown): { ok: true; core: Core } | Invalid {
   if (j.level !== undefined && !LEVELS.includes(j.level as Level)) return bad('level', 'must be info, warn or error')
   if (j.link !== undefined) {
     let protocol = ''
-    try { protocol = new URL(j.link as string).protocol } catch {}
-    if (protocol !== 'http:' && protocol !== 'https:') return bad('link', 'must be an http or https URL')
+    try { if (str(j.link, 1, 2000)) protocol = new URL(j.link as string).protocol } catch {}
+    if (protocol !== 'http:' && protocol !== 'https:') return bad('link', 'must be an http or https URL of at most 2000 characters')
   }
   if (j.thread !== undefined && !str(j.thread, 1, 100)) return bad('thread', 'must be a string of 1-100 characters')
   if (j.key !== undefined && !str(j.key, 1, 200)) return bad('key', 'must be a string of 1-200 characters')

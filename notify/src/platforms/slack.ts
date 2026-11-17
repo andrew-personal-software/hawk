@@ -77,7 +77,7 @@ export function render(msg: Core): SlackPayload {
   if (body.length > MAX_BODY_SECTIONS) body = [...body.slice(0, MAX_BODY_SECTIONS - 1), '_(truncated)_']
   blocks.push(...body.map(section))
   if (msg.link) blocks.push(section(`<${encodeUrl(msg.link)}|Open>`))
-  return { text: msg.title, blocks }
+  return { text: esc(msg.title), blocks }
 }
 
 export function mapResponse(status: number, retryAfter: string | null, body: unknown): Result {
@@ -101,11 +101,17 @@ export function makeSlack(fetchImpl: typeof fetch = fetch): Platform {
     label: 'Slack',
     configured: (env) => typeof env.SLACK_BOT_TOKEN === 'string' && env.SLACK_BOT_TOKEN !== '',
     async send(msg, target, env) {
+      let body: string
+      try {
+        body = JSON.stringify({ channel: target, ...render(msg) })
+      } catch (err) {
+        return { kind: 'permanent', error: `render: ${err instanceof Error ? err.message : String(err)}` }
+      }
       try {
         const res = await fetchImpl('https://slack.com/api/chat.postMessage', {
           method: 'POST',
           headers: { authorization: `Bearer ${env.SLACK_BOT_TOKEN}`, 'content-type': 'application/json; charset=utf-8' },
-          body: JSON.stringify({ channel: target, ...render(msg) }),
+          body,
           signal: AbortSignal.timeout(10_000),
         })
         return mapResponse(res.status, res.headers.get('retry-after'), await res.json().catch(() => null))

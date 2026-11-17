@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { Core, Env, Platform, Result } from '../src/core.ts'
 import { openDb, insertMessage, getMessage, getState, queuedCount } from '../src/db.ts'
 import { tick, startWorker } from '../src/worker.ts'
+import { makeSlack } from '../src/platforms/slack.ts'
 import type { WorkerDeps } from '../src/worker.ts'
 
 const c: Core = { topic: 'a.b', title: 'T', level: 'info' }
@@ -111,6 +112,47 @@ test('a failed email is retried on the next tick', async () => {
   insertMessage(d.db, c, 'v1', { slack: '#a' }, 0)
   await tick(d); await tick(d); ok = true; await tick(d); await tick(d)
   assert.equal(emails.length, 2)
+})
+test('a poison message fails permanently and leaves slack up', async () => {
+  const { d } = setup([])
+  d.platform = makeSlack(async () => Response.json({ ok: true, ts: '1' }))
+  const poison = { ...c, link: ['https://x.y'] } as unknown as Core
+  const id = insertMessage(d.db, poison, 'v1', { slack: '#a' }, 0).id
+  await tick(d)
+  assert.equal(getMessage(d.db, id)!.status, 'failed')
+  const s = getState(d.db, 'slack'); assert.equal(s.status, 'up'); assert.equal(s.failingSince, null)
+})
+test('permanent clears failingSince: a blip two days later is not an outage', async () => {
+  const { d, emails, clock } = setup([{ kind: 'transient', error: 'net' }, { kind: 'permanent', error: 'not_in_channel' }, { kind: 'ok' }, { kind: 'transient', error: 'blip' }])
+  insertMessage(d.db, c, 'v1', { slack: '#a' }, 0); insertMessage(d.db, c, 'v1', { slack: '#b' }, 0)
+  await tick(d); clock.t = 1000; await tick(d)
+  assert.equal(getState(d.db, 'slack').failingSince, null)
+  clock.t = 2 * 86_400_000; await tick(d); await tick(d)
+  assert.equal(getState(d.db, 'slack').status, 'up'); assert.equal(emails.length, 0)
+})
+test('retry_after clears failingSince', async () => {
+  const { d, clock } = setup([{ kind: 'transient', error: 'net' }, { kind: 'retry_after', seconds: 1 }])
+  insertMessage(d.db, c, 'v1', { slack: '#a' }, 0)
+  await tick(d); clock.t = 5000; await tick(d)
+  assert.equal(getState(d.db, 'slack').failingSince, null)
+})
+test('bad token after no_token is a new outage: a second email with the real reason', async () => {
+  const { d, emails, logs, clock } = setup([{ kind: 'auth', error: 'invalid_auth' }], {})
+  insertMessage(d.db, c, 'v1', { slack: '#a' }, 0)
+  await tick(d); assert.deepEqual(emails.map((e) => e[0]), ['hawk: Slack is not set up'])
+  clock.t = 3_700_000; d.env.SLACK_BOT_TOKEN = 'bad'
+  await tick(d); await tick(d); await tick(d)
+  assert.deepEqual(emails.map((e) => e[0]), ['hawk: Slack is not set up', 'hawk: Slack is down'])
+  assert.match(emails[1][1], /Reason: invalid_auth/)
+  const s = getState(d.db, 'slack'); assert.equal(s.reason, 'invalid_auth'); assert.equal(s.downSince, 3_700_000)
+  assert.deepEqual(logs, ['notify: slack down: no_token', 'notify: slack down: invalid_auth'])
+})
+test('transient after no_token takes the transient reason and a new downSince', async () => {
+  const { d, logs, clock } = setup([{ kind: 'transient', error: 'net' }], {})
+  insertMessage(d.db, c, 'v1', { slack: '#a' }, 0)
+  await tick(d); clock.t = 1000; d.env.SLACK_BOT_TOKEN = 'x'; await tick(d)
+  const s = getState(d.db, 'slack'); assert.equal(s.reason, 'net'); assert.equal(s.downSince, 1000)
+  assert.deepEqual(logs, ['notify: slack down: no_token', 'notify: slack down: net'])
 })
 test('startWorker: stop() cancels the sleep', async () => {
   const { d, emails } = setup([], {})
