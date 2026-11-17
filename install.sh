@@ -33,7 +33,7 @@ dupes=$( (echo "PORT=$GATUS_PORT"; echo "PORT=$MLFLOW_PORT"; echo "PORT=$NOTIFY_
 [[ -z $dupes ]] || die "port used twice in apps/*.env (or by gatus/mlflow/notify): $dupes"
 
 step "files: $HAWK, /usr/local/bin/hawk"
-notify_sum() { tar -C "$HAWK" -cf - notify 2>/dev/null | sha256sum; }
+notify_sum() { [[ -d $HAWK/notify ]] || return 0; tar -C "$HAWK" -cf - notify | sha256sum; }
 restart_notify=0
 before=$(notify_sum)
 rsync -a --delete --exclude .git --exclude hawk.env --exclude node_modules "$HERE/" "$HAWK/"
