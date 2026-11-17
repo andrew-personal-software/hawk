@@ -1,6 +1,6 @@
 # hawk notify: design
 
-Task: HAWK-8. Follow-ups: HAWK-9 (Discord adapter), SPAR-51 (sparrow sends), BUDGIE-11 (budgie sends), TASK-8 (replies).
+Task: HAWK-8. Discord is the first platform (was HAWK-9). Follow-ups: SPAR-51 (sparrow sends), BUDGIE-11 (budgie sends), TASK-8 (replies).
 
 ## Why
 
@@ -26,7 +26,7 @@ through it, and a separate agent session service will handle replies (TASK-8).
 ## Non-goals (this task)
 
 - Sending from sparrow or budgie (SPAR-51, BUDGIE-11).
-- Replies, or any inbound Slack events (TASK-8, in the agent session service).
+- Replies, or any inbound chat events (TASK-8, in the agent session service).
 - Discord adapter.
 - Slack threads. `thread` is accepted and stored, but not used yet.
 - Email as a channel for normal messages.
