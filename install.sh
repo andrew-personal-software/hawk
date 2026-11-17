@@ -5,7 +5,7 @@
 # heartbeat timer, the OnFailure alert unit, gatus (uptime page for every app in apps/), the hawk
 # status page, an MLflow server on its own 10G volume and hawk-notifyd (the message service at
 # 127.0.0.1:3402), and serves https://status.<domain>, https://hawk.<domain> and https://mlflow.<domain>
-# to the tailnet. Alerts go to Slack through hawk-notifyd; Resend emails only when Slack or it is down. The first run takes /etc/hawk/hawk.env from ./hawk.env (git-ignored) if it
+# to the tailnet. Alerts go to Discord through hawk-notifyd; Resend emails only when Discord or it is down. The first run takes /etc/hawk/hawk.env from ./hawk.env (git-ignored) if it
 # exists, or asks for its values.
 set -euo pipefail
 
@@ -69,16 +69,16 @@ if [[ ! -f $ETC/hawk.env ]]; then
     read -rp "Email from (a verified Resend domain, e.g. hawk <hawk@$DOMAIN>): " from
     read -rp "Email to: " to
     read -rp "healthchecks.io ping URL (https://hc-ping.com/<uuid>): " hc
-    read -rsp "Slack bot token (xoxb-…, blank to set later): " slack
+    read -rsp "Discord bot token (blank to set later): " discord
     echo
     install -m 0600 /dev/null "$ETC/hawk.env"
-    printf "RESEND_API_KEY=%s\nEMAIL_FROM='%s'\nEMAIL_TO=%s\nHC_PING_URL=%s\nSLACK_BOT_TOKEN=%s\n" "$key" "$from" "$to" "$hc" "$slack" >"$ETC/hawk.env"
+    printf "RESEND_API_KEY=%s\nEMAIL_FROM='%s'\nEMAIL_TO=%s\nHC_PING_URL=%s\nDISCORD_BOT_TOKEN=%s\n" "$key" "$from" "$to" "$hc" "$discord" >"$ETC/hawk.env"
   fi
 fi
 for key in RESEND_API_KEY EMAIL_FROM EMAIL_TO HC_PING_URL; do
   grep -q "^$key=." "$ETC/hawk.env" || die "no $key in $ETC/hawk.env. Fix it: sudo -e $ETC/hawk.env"
 done
-grep -q '^SLACK_BOT_TOKEN=.' "$ETC/hawk.env" || echo "warning: no SLACK_BOT_TOKEN in $ETC/hawk.env. Messages queue until it is set. Fix it: sudo -e $ETC/hawk.env"
+grep -q '^DISCORD_BOT_TOKEN=.' "$ETC/hawk.env" || echo "warning: no DISCORD_BOT_TOKEN in $ETC/hawk.env. Messages queue until it is set. Fix it: sudo -e $ETC/hawk.env"
 
 step "user: hawk-runner"
 if ! id -u hawk-runner >/dev/null 2>&1; then
@@ -221,7 +221,7 @@ curl -fsS -m 2 "http://127.0.0.1:$NOTIFY_PORT/healthz" >/dev/null 2>&1 || die "h
 cat <<EOF
 
 Done. Status pages: https://hawk.$DOMAIN (deploys) and https://status.$DOMAIN (uptime). MLflow: https://mlflow.$DOMAIN
-Notify service: http://127.0.0.1:$NOTIFY_PORT/v1/messages (Slack token: sudo -e $ETC/hawk.env, then sudo systemctl restart hawk-notifyd)
+Notify service: http://127.0.0.1:$NOTIFY_PORT/v1/messages (Discord token: sudo -e $ETC/hawk.env, then sudo systemctl restart hawk-notifyd)
 Test the alerts:  sudo hawk notify "hello from hawk"  &&  sudo systemctl start hawk-heartbeat
 
 Next, for each app:

@@ -16,10 +16,10 @@ through it, and a separate agent session service will handle replies (TASK-8).
 
 - One local HTTP API on the box that any service calls with plain JSON.
 - Routing is config in the hawk repo. Services never name a platform, channel or secret.
-- Slack first. Discord later as one new adapter file, with no change to callers or to the queue.
-- Messages survive hawk restarts and Slack outages (a queue). They wait and go to Slack when it is back.
-- Notifications arrive only in Slack. Email is used for one thing: one alert that Slack is down.
-- No email storm. hawk keeps state on whether Slack is down and whether the down alert was sent.
+- Discord first. The Slack adapter stays in the code, unused, and a platform is one adapter file with no change to callers or to the queue.
+- Messages survive hawk restarts and Discord outages (a queue). They wait and go to Discord when it is back.
+- Notifications arrive only in Discord. Email is used for one thing: one alert that Discord is down.
+- No email storm. hawk keeps state on whether Discord is down and whether the down alert was sent.
 - The queue is easy to extend for threads (one Slack thread per sparrow task) later.
 - Callers keep working when the contract changes (versioned API).
 
@@ -36,8 +36,8 @@ through it, and a separate agent session service will handle replies (TASK-8).
 ## Anti-goals
 
 - A failed or slow send must never break the caller. Callers get an answer fast; delivery is async.
-- No message is silently lost: it reaches Slack, or stays queued, or is `failed` with a journal error.
-- No email storm: at most one "Slack is down" email per outage.
+- No message is silently lost: it reaches Discord, or stays queued, or is `failed` with a journal error.
+- No email storm: at most one "Discord is down" email per outage.
 - No secrets outside `/etc/hawk/hawk.env`.
 - Not reachable from other machines.
 
@@ -55,9 +55,9 @@ through it, and a separate agent session service will handle replies (TASK-8).
 - HTTP API, not a package. No JSON Schema file and no zod: one TypeScript type plus a small hand-written check.
 - Routing is config-driven, in hawk.
 - Bodies are markdown. hawk converts per channel. (Markdown in, not HTML in.)
-- Slack first, via a bot token (`chat.postMessage`), not webhooks.
+- Discord first, via a bot token (`POST /channels/{id}/messages`), not webhooks. Slack (`chat.postMessage`) is kept, unused.
 - Queue, not synchronous sends.
-- Slack only. Slack fails → messages stay queued until Slack is back. No per-message email.
+- Discord only. Discord fails → messages stay queued until Discord is back. No per-message email.
 - State, per platform, records whether it is down and whether the down alert went out. One email per outage.
 - One delivery row per message per target, and one worker per platform, so platforms never block each other.
 - A 429 is not an outage.
@@ -96,7 +96,7 @@ Unknown fields are ignored (forward compatible).
 GET /v1/messages/{id}
 200 {"id", "topic", "status": "queued|sent|failed", "created": "<ISO>",
      "deliveries": [
-       {"platform": "slack", "target": "#sparrow", "status": "queued|sent|failed",
+       {"platform": "discord", "target": "<channel id>", "status": "queued|sent|failed",
         "attempts": 2, "error": "<last error>"|null, "sent": "<ISO>"|null}
      ]}
 404 {"error": {"code": "not_found", "message": "…"}}
@@ -125,12 +125,12 @@ refused that delivery for good (see Delivery). Keys are kept as long as their ro
 
 ```ts
 export default {
-  default: { slack: '#hawk' },             // topic with no route; also gets the notices below
+  default: { discord: '<channel id>' },    // topic with no route; also gets the notices below
   routes: {
-    'hawk.*':              { slack: '#hawk' },
-    'sparrow.task.status': { slack: '#sparrow' },
-    'budgie.daily':        { slack: '#budgie' },
-    // later: 'budgie.daily': { slack: '#budgie', discord: '<channel id>' },
+    'hawk.*':              { discord: '<channel id>' },
+    'sparrow.task.status': { discord: '<channel id>' },
+    'budgie.daily':        { discord: '<channel id>' },
+    // Slack still works: { slack: '#budgie' } with SLACK_BOT_TOKEN set.
   },
 }
 ```
@@ -153,7 +153,7 @@ type Result =
   | { kind: 'permanent'; error: string }       // will never work for this delivery
 
 type Platform = {
-  name: 'slack'                                // later 'discord'
+  name: 'discord'                              // or 'slack'
   configured(env): boolean                     // token present?
   send(core, target, env): Promise<Result>     // renders, then posts
 }
@@ -169,7 +169,7 @@ adapters. Adding Discord = one new file, one line in that list, a token in `hawk
 `next_at = now`, and wakes the workers.
 
 There is **one worker loop per platform**. Each sends one delivery at a time, oldest first. A 429 or outage on
-one platform never holds up another. Volume is low, so this stays far under Slack's ~1 message/second/channel.
+one platform never holds up another. Volume is low, so this stays far under Discord and Slack channel rate limits.
 
 Order is decided in one function, `nextDelivery(db, platform, now)`. Nothing else picks rows. This is the
 extension point for threads (see "Threads (later)").
@@ -198,7 +198,7 @@ This is what stops an email storm. One row per platform in a `platform_state` ta
 
 | Field | Meaning |
 |---|---|
-| `platform` | `slack`, later `discord` |
+| `platform` | `discord` (or `slack`) |
 | `status` | `up` or `down` |
 | `reason` | last error, or `no_token` |
 | `failing_since` | first transient failure in the current run of failures, or null |
@@ -221,7 +221,7 @@ Rules, per platform:
 
 ## No token
 
-Platform tokens (`SLACK_BOT_TOKEN`, later `DISCORD_BOT_TOKEN`) are optional, so `hawk-update` (which runs
+Platform tokens (`DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`) are optional, so `hawk-update` (which runs
 `install.sh </dev/null`) never breaks before a token exists. `install.sh` warns when one is missing; it does not
 `die`. A platform with no token (`configured()` is false) but with targets in `routes.ts` is `down` with reason
 `no_token`: its deliveries queue, and the same one-email rule sends "hawk: <Platform> is not set up". Adding the
@@ -251,7 +251,15 @@ fenced code, `[text](url)`, bare URLs, `-`/`*`/`1.` lists, `>` quotes. Anything 
   messages, sent one after another 1 s apart, each titled `<title> (i/n)`, with the link in the last one. A failure
   part-way returns that failure and the retry posts every part again, so earlier parts can repeat. Convert: `**x**`→`*x*`, `*x*`/`_x_`→`_x_`, `[t](u)`→`<u|t>`, headings → bold
   line, escape `&`, `<`, `>`.
-- **Discord** (later): markdown almost as is; split at 2000 chars.
+- **Discord**: markdown almost as is, in `content` (≤2000 chars), with `allowed_mentions: {parse: []}`. Header
+  line `<prefix>**<title>**` (prefix `⚠️ ` warn, `🚨 ` error), then the body. Convert: `**x**`, `*x*`/`_x_`→`*x*`,
+  `[t](u)`→`[t](u)` with `)`→`%29` and space→`%20` in `u`, heading → `### t`, quote `> `, fence, `- `/`1.` lists;
+  escape `\ * _ ~ ` + "`" + ` | [ ]` in text. Longer messages are packed by block into parts titled `(i/n)`, sent 1 s
+  apart; a block over budget is cut at the last newline or space, else at the budget, and may misrender at the cut
+  (all the information matters more than clean rendering). `link` is `[Open](url)` at the end of the last part,
+  or its own final part holding the raw url when it does not fit. Errors: 429 → `retry_after` (body
+  `retry_after`), 401 → `auth`, 5xx and network → `transient`, other 4xx → `permanent`. A bot must connect to the
+  gateway once before it can send: `notify/scripts/discord-identify.ts`.
 - **Email** is only the down alert: plain text from a fixed template, through Resend.
 
 ## Storage
@@ -275,7 +283,8 @@ notify/
     alert.ts       // the down email (Resend)
     platforms/
       index.ts     // list of adapters
-      slack.ts     // render + send + error mapping
+      slack.ts     // (kept, unused)
+      discord.ts   // render + send + error mapping
   test/            // node:test
 systemd/hawk-notifyd.service
 ```
@@ -285,7 +294,7 @@ systemd/hawk-notifyd.service
   `EnvironmentFile=/etc/hawk/hawk.env`, `Restart=on-failure`, `OnFailure=hawk-notify@%N.service`, hardening like
   `mlflow.service`.
 - `install.sh`: add `NOTIFY_PORT=3402` to the duplicate-port check; install and enable the unit; restart it
-  when `/opt/hawk/notify` changes; ask for `SLACK_BOT_TOKEN` on first install (blank allowed), and warn, not
+  when `/opt/hawk/notify` changes; ask for `DISCORD_BOT_TOKEN` on first install (blank allowed), and warn, not
   fail, when it is missing.
 - `hawk notify <message>`: POST `{topic: "hawk.alert", title: <message>, level: "error"}` to the service. If the
   service does not answer, the alert system itself is down: email directly through Resend like today, **at most
@@ -293,14 +302,15 @@ systemd/hawk-notifyd.service
   the journal only.
 - CI: run `node --test notify/test` in `check.yml`, beside shellcheck.
 
-## Slack setup (one time, by the user)
+## Discord setup (one time, by the user)
 
-Make a Slack app with the `chat:write` scope, install it to the workspace, put the bot token in
-`/etc/hawk/hawk.env` as `SLACK_BOT_TOKEN`, and invite the bot to each channel in `routes.ts`.
+Developer Portal → New Application → Bot → Reset Token, into `/etc/hawk/hawk.env` as `DISCORD_BOT_TOKEN`. OAuth2
+URL Generator: scope `bot`, permissions View Channels + Send Messages; add the bot to the server. Run
+`notify/scripts/discord-identify.ts` once. Paste the channel IDs into `routes.ts`. No privileged intents.
 
 ## Left to the builder
 
 - Internal names, SQL schema details, id format (any sortable unique id with the `msg_` prefix).
 - Exact markdown edge cases inside the listed subset.
-- Test scope: the v1 check, routing match order, markdown → Slack, worker backoff, platform state and the one-email
-  rule, with a fake clock and fake senders. No live Slack or Resend calls in tests.
+- Test scope: the v1 check, routing match order, markdown → Discord and Slack, worker backoff, platform state and the one-email
+  rule, with a fake clock and fake senders. No live Discord, Slack or Resend calls in tests.
