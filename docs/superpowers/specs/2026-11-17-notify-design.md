@@ -27,7 +27,6 @@ through it, and a separate agent session service will handle replies (TASK-8).
 
 - Sending from sparrow or budgie (SPAR-51, BUDGIE-11).
 - Replies, or any inbound chat events (TASK-8, in the agent session service).
-- Discord adapter.
 - Slack threads. `thread` is accepted and stored, but not used yet.
 - Email as a channel for normal messages.
 - Moving gatus alerts onto the service. Gatus keeps its own Resend alerting for now.
