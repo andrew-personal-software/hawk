@@ -57,7 +57,7 @@ function inline(s: string): Inline[] {
 const startsBlock = (l: string) => FENCE.test(l) || HEADING.test(l) || ITEM.test(l) || QUOTE.test(l)
 
 export function parse(md: string): Block[] {
-  const lines = md.split('\n')
+  const lines = md.split(/\r?\n/)
   const blocks: Block[] = []
   let i = 0
   while (i < lines.length) {

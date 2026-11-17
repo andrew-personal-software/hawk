@@ -33,3 +33,8 @@ test('empty input', () => assert.deepEqual(parse(''), []))
 test('never throws on odd input', () => {
   for (const s of ['*', '**', '`', '[', '[a](', '[a](x)', '> ', '- ', '1.', '```', '_', '\n\n', '[a]()', 'https://']) parse(s)
 })
+test('CRLF parses like LF', () => {
+  const lf = '## Hi\n- a\n\n> q\n\ntext'
+  assert.deepEqual(parse(lf.replaceAll('\n', '\r\n')), parse(lf))
+  assert.equal(parse(lf).length, 4)
+})
