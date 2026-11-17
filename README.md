@@ -9,8 +9,8 @@ Deploys and monitors the apps on the mini PC (`andrewsserver`). Each app runs as
 - **Rollback.** `sudo hawk rollback <app> [release]`.
 - **Status page.** Gatus checks every app each minute at `https://status.andrewminghanjiang.com`.
 - **hawk page.** `https://hawk.andrewminghanjiang.com`, rewritten each minute by `hawk status`: each app's live version, release, deploy time, rollback target and services, plus the runners, the last 7 days of alerts, disk and heartbeat.
-- **Alerts** are emails, sent through Resend (budgie's sender):
-  - an app is down 3 checks in a row, or its cert expires in under 7 days (gatus);
+- **Alerts and messages** go to Slack through `hawk-notifyd` (`POST http://127.0.0.1:3402/v1/messages`, routes in `notify/routes.ts`). Email is only for "Slack is down" (once per outage) and when `hawk-notifyd` itself is down (once per 30 min). Alerts that send them:
+  - an app is down 3 checks in a row, or its cert expires in under 7 days (gatus, still by email);
   - any app service fails, including backups and predeploy (`OnFailure=hawk-notify@`);
   - the box stops sending heartbeats, or its disk is 90%+ full (healthchecks.io emails you itself).
 
@@ -33,6 +33,22 @@ The first run makes `/etc/hawk/hawk.env` from `~/hawk/hawk.env` (git-ignored) if
 
 - `RESEND_API_KEY`, `EMAIL_FROM` (on a domain verified in Resend) and `EMAIL_TO`;
 - `HC_PING_URL`: make a healthchecks.io check with a 5 min period and 10 min grace. It emails your account when pings stop.
+- `SLACK_BOT_TOKEN` (optional, blank to set later; messages queue until it is set). Make a Slack app with the `chat:write` scope, install it to the workspace, put the bot token in `/etc/hawk/hawk.env`, restart `hawk-notifyd`, and invite the bot to each channel in `notify/routes.ts`.
+
+## Send a message
+
+```sh
+curl -fsS http://127.0.0.1:3402/v1/messages -d '{
+  "topic": "sparrow.task.status",
+  "title": "HAWK-8: in-progress → done",
+  "body": "markdown, optional",
+  "level": "info",
+  "link": "https://example.com",
+  "key": "sparrow:HAWK-8:done"
+}'
+```
+
+`202 {"id": "msg_…", "status": "queued"}`. `GET /v1/messages/<id>` shows the delivery. `topic` is `<service>.<event>`; `level` is `info`, `warn` or `error`; `key` dedups.
 
 ## Add an app
 

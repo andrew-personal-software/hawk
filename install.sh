@@ -3,9 +3,9 @@
 #   git pull && sudo ./install.sh
 # Copies the checkout to /opt/hawk, links /usr/local/bin/hawk, creates hawk-runner, installs the
 # heartbeat timer, the OnFailure alert unit, gatus (uptime page for every app in apps/), the hawk
-# status page and an MLflow server on its own 10G volume, and serves https://status.<domain>,
-# https://hawk.<domain> and https://mlflow.<domain> to the tailnet. Alerts are
-# emails through Resend. The first run takes /etc/hawk/hawk.env from ./hawk.env (git-ignored) if it
+# status page, an MLflow server on its own 10G volume and hawk-notifyd (the message service at
+# 127.0.0.1:3402), and serves https://status.<domain>, https://hawk.<domain> and https://mlflow.<domain>
+# to the tailnet. Alerts go to Slack through hawk-notifyd; Resend emails only when Slack or it is down. The first run takes /etc/hawk/hawk.env from ./hawk.env (git-ignored) if it
 # exists, or asks for its values.
 set -euo pipefail
 
@@ -18,6 +18,7 @@ GATUS_PORT=3400
 MLFLOW_VERSION=3.18.0
 MLFLOW_PORT=3401
 MLFLOW_DATA=/var/lib/mlflow
+NOTIFY_PORT=3402
 
 die() { echo "error: $*" >&2; exit 1; }
 step() { echo "==> $*"; }
@@ -28,11 +29,15 @@ for cmd in systemctl tailscale go node caddy curl jq rsync visudo useradd git fl
 done
 
 step "ports: apps/*.env"
-dupes=$( (echo "PORT=$GATUS_PORT"; echo "PORT=$MLFLOW_PORT"; cat "$HERE"/apps/*.env) | sed -n 's/^PORT=//p' | sort | uniq -d)
-[[ -z $dupes ]] || die "port used twice in apps/*.env (or by gatus/mlflow): $dupes"
+dupes=$( (echo "PORT=$GATUS_PORT"; echo "PORT=$MLFLOW_PORT"; echo "PORT=$NOTIFY_PORT"; cat "$HERE"/apps/*.env) | sed -n 's/^PORT=//p' | sort | uniq -d)
+[[ -z $dupes ]] || die "port used twice in apps/*.env (or by gatus/mlflow/notify): $dupes"
 
 step "files: $HAWK, /usr/local/bin/hawk"
+notify_sum() { tar -C "$HAWK" -cf - notify 2>/dev/null | sha256sum; }
+restart_notify=0
+before=$(notify_sum)
 rsync -a --delete --exclude .git --exclude hawk.env --exclude node_modules "$HERE/" "$HAWK/"
+[[ $(notify_sum) == "$before" ]] || restart_notify=1
 git -c safe.directory="$HERE" -C "$HERE" rev-parse HEAD >"$HAWK/COMMIT" 2>/dev/null || echo unknown >"$HAWK/COMMIT"
 chown -R root:root "$HAWK"
 ln -sfn "$HAWK/bin/hawk" /usr/local/bin/hawk
@@ -63,13 +68,16 @@ if [[ ! -f $ETC/hawk.env ]]; then
     read -rp "Email from (a verified Resend domain, e.g. hawk <hawk@$DOMAIN>): " from
     read -rp "Email to: " to
     read -rp "healthchecks.io ping URL (https://hc-ping.com/<uuid>): " hc
+    read -rsp "Slack bot token (xoxb-…, blank to set later): " slack
+    echo
     install -m 0600 /dev/null "$ETC/hawk.env"
-    printf "RESEND_API_KEY=%s\nEMAIL_FROM='%s'\nEMAIL_TO=%s\nHC_PING_URL=%s\n" "$key" "$from" "$to" "$hc" >"$ETC/hawk.env"
+    printf "RESEND_API_KEY=%s\nEMAIL_FROM='%s'\nEMAIL_TO=%s\nHC_PING_URL=%s\nSLACK_BOT_TOKEN=%s\n" "$key" "$from" "$to" "$hc" "$slack" >"$ETC/hawk.env"
   fi
 fi
 for key in RESEND_API_KEY EMAIL_FROM EMAIL_TO HC_PING_URL; do
   grep -q "^$key=." "$ETC/hawk.env" || die "no $key in $ETC/hawk.env. Fix it: sudo -e $ETC/hawk.env"
 done
+grep -q '^SLACK_BOT_TOKEN=.' "$ETC/hawk.env" || echo "warning: no SLACK_BOT_TOKEN in $ETC/hawk.env. Messages queue until it is set. Fix it: sudo -e $ETC/hawk.env"
 
 step "user: hawk-runner"
 if ! id -u hawk-runner >/dev/null 2>&1; then
@@ -181,6 +189,7 @@ for f in "$HERE"/systemd/*; do
     reload=1
     if [[ $(basename "$f") == gatus.service ]]; then restart_gatus=1; fi
     if [[ $(basename "$f") == mlflow.service ]]; then restart_mlflow=1; fi
+    if [[ $(basename "$f") == hawk-notifyd.service ]]; then restart_notify=1; fi
   fi
 done
 ((reload == 0)) || systemctl daemon-reload
@@ -188,6 +197,10 @@ systemctl enable --now hawk-heartbeat.timer >/dev/null
 systemctl enable --now hawk-status.timer >/dev/null
 systemctl enable --now mlflow-backup.timer >/dev/null
 systemctl start hawk-status
+systemctl enable hawk-notifyd >/dev/null
+if ((restart_notify)) || ! systemctl is-active --quiet hawk-notifyd; then systemctl restart hawk-notifyd; fi
+for _ in $(seq 1 30); do curl -fsS -m 2 "http://127.0.0.1:$NOTIFY_PORT/healthz" >/dev/null 2>&1 && break; sleep 1; done
+curl -fsS -m 2 "http://127.0.0.1:$NOTIFY_PORT/healthz" >/dev/null 2>&1 || die "hawk-notifyd did not start. See journalctl -u hawk-notifyd"
 systemctl enable mlflow >/dev/null
 if ((restart_mlflow)) || ! systemctl is-active --quiet mlflow; then systemctl restart mlflow; fi
 for _ in $(seq 1 60); do curl -fsS -m 2 "http://127.0.0.1:$MLFLOW_PORT/health" >/dev/null 2>&1 && break; sleep 1; done
@@ -205,6 +218,7 @@ systemctl is-active --quiet gatus || die "gatus did not start. See journalctl -u
 cat <<EOF
 
 Done. Status pages: https://hawk.$DOMAIN (deploys) and https://status.$DOMAIN (uptime). MLflow: https://mlflow.$DOMAIN
+Notify service: http://127.0.0.1:$NOTIFY_PORT/v1/messages (Slack token: sudo -e $ETC/hawk.env, then sudo systemctl restart hawk-notifyd)
 Test the alerts:  sudo hawk notify "hello from hawk"  &&  sudo systemctl start hawk-heartbeat
 
 Next, for each app:

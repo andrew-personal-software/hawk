@@ -4,7 +4,7 @@
 #   hawk deploy <app>                  run by the release workflow as hawk-runner, from the app's checkout
 #   sudo hawk rollback <app> [release] switch to the previous (or given) release and restart
 #   sudo hawk runner <repo-or-org-url> <token>   add a GitHub runner with the label "hawk"
-#   hawk notify <message>              email EMAIL_TO through Resend (values in /etc/hawk/hawk.env)
+#   hawk notify <message>  send to the notify service (email if it is down, at most once per 30 min)
 #   hawk heartbeat                     ping healthchecks.io, or /fail when the disk is 90%+ full; email when mlflow fills
 #   hawk mlflow-backup                 copy the MLflow DB to /var/backups/mlflow (keeps 7)
 #   hawk status [file]                 write the status page (https://hawk.<domain>) as HTML
@@ -183,11 +183,23 @@ cmd_runner() {
 
 cmd_notify() {
   env_file
+  local stamp=${STATE_DIRECTORY:-/var/lib/hawk-notify-fallback}/last-email
+  if jq -n --arg m "$*" --arg host "$(hostname)" \
+    '{topic: "hawk.alert", title: ($m | .[0:150]), body: ("on " + $host), level: "error"}' |
+    curl -fsS -m 5 --data-binary @- http://127.0.0.1:3402/v1/messages >/dev/null 2>&1; then
+    return 0
+  fi
+  mkdir -p "$(dirname "$stamp")"
+  if [[ -n $(find "$stamp" -mmin -30 2>/dev/null) ]]; then
+    echo "hawk notify: service down, email skipped (one sent in the last 30 min): $*" >&2
+    return 0
+  fi
   [[ -n ${RESEND_API_KEY:-} && -n ${EMAIL_FROM:-} && -n ${EMAIL_TO:-} ]] || die "set RESEND_API_KEY, EMAIL_FROM and EMAIL_TO in /etc/hawk/hawk.env"
-  jq -n --arg from "$EMAIL_FROM" --arg to "$EMAIL_TO" --arg subject "hawk: $*" --arg text "$* (on $(hostname))" \
+  jq -n --arg from "$EMAIL_FROM" --arg to "$EMAIL_TO" --arg subject "hawk: notify service down: $*" --arg text "$* (on $(hostname))" \
     '{from: $from, to: [$to], subject: $subject, text: $text}' |
     curl -fsS -m 10 --retry 3 -H "Authorization: Bearer $RESEND_API_KEY" -H "Content-Type: application/json" \
       --data-binary @- https://api.resend.com/emails >/dev/null
+  touch "$stamp"
 }
 
 cmd_heartbeat() {
