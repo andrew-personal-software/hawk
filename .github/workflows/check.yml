@@ -14,3 +14,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - run: shellcheck bin/hawk bin/hawk-update install.sh caddy/setup.sh scripts/ship.sh
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test

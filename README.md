@@ -9,8 +9,8 @@ Deploys and monitors the apps on the mini PC (`andrewsserver`). Each app runs as
 - **Rollback.** `sudo hawk rollback <app> [release]`.
 - **Status page.** Gatus checks every app each minute at `https://status.andrewminghanjiang.com`.
 - **hawk page.** `https://hawk.andrewminghanjiang.com`, rewritten each minute by `hawk status`: each app's live version, release, deploy time, rollback target and services, plus the runners, the last 7 days of alerts, disk and heartbeat.
-- **Alerts** are emails, sent through Resend (budgie's sender):
-  - an app is down 3 checks in a row, or its cert expires in under 7 days (gatus);
+- **Alerts and messages** go to Discord through `hawk-notifyd` (`POST http://127.0.0.1:3402/v1/messages`, routes in `notify/routes.ts`). Email is only for "Discord is down" (once per outage) and when `hawk-notifyd` itself is down (once per 30 min). Alerts that send them:
+  - an app is down 3 checks in a row, or its cert expires in under 7 days (gatus, still by email);
   - any app service fails, including backups and predeploy (`OnFailure=hawk-notify@`);
   - the box stops sending heartbeats, or its disk is 90%+ full (healthchecks.io emails you itself).
 
@@ -33,6 +33,28 @@ The first run makes `/etc/hawk/hawk.env` from `~/hawk/hawk.env` (git-ignored) if
 
 - `RESEND_API_KEY`, `EMAIL_FROM` (on a domain verified in Resend) and `EMAIL_TO`;
 - `HC_PING_URL`: make a healthchecks.io check with a 5 min period and 10 min grace. It emails your account when pings stop.
+- `DISCORD_BOT_TOKEN` (optional, blank to set later; messages queue until it is set). No privileged intents are needed.
+  1. Discord Developer Portal → New Application → Bot → Reset Token. Put it in `/etc/hawk/hawk.env` as `DISCORD_BOT_TOKEN`.
+  2. OAuth2 → URL Generator: scope `bot`, permissions View Channels + Send Messages. Open the URL and add the bot to your server.
+  3. Run once (a bot must connect to the gateway before it can send): `sudo bash -c 'set -a; . /etc/hawk/hawk.env; node /opt/hawk/notify/scripts/discord-identify.ts'`
+  4. Paste the channel IDs (Developer Mode → right-click channel → Copy Channel ID) into `notify/routes.ts`, then `sudo systemctl restart hawk-notifyd`.
+
+  The Slack adapter is still in the code: add `slack:` targets and `SLACK_BOT_TOKEN` to use it.
+
+## Send a message
+
+```sh
+curl -fsS http://127.0.0.1:3402/v1/messages -d '{
+  "topic": "sparrow.task.status",
+  "title": "HAWK-8: in-progress → done",
+  "body": "markdown, optional",
+  "level": "info",
+  "link": "https://example.com",
+  "key": "sparrow:HAWK-8:done"
+}'
+```
+
+`202 {"id": "msg_…", "status": "queued"}`. `GET /v1/messages/<id>` shows the delivery. `topic` is `<service>.<event>`; `level` is `info`, `warn` or `error`; `key` dedups.
 
 ## Add an app
 

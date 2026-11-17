@@ -1,0 +1,20 @@
+# Message service at 127.0.0.1:3402: queues messages from hawk and apps and sends them to Discord. Installed by install.sh.
+[Unit]
+Description=hawk: notify service
+Wants=network-online.target
+After=network-online.target
+OnFailure=hawk-notify@%N.service
+
+[Service]
+DynamicUser=true
+StateDirectory=hawk-notify
+EnvironmentFile=/etc/hawk/hawk.env
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/hawk/notify/src/main.ts
+Restart=on-failure
+RestartSec=5
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
