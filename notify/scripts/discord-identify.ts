@@ -5,10 +5,16 @@ if (!token) {
   process.exit(1)
 }
 
-const res = await fetch('https://discord.com/api/v10/gateway/bot', { headers: { authorization: `Bot ${token}` } })
+let res: Response
+try {
+  res = await fetch('https://discord.com/api/v10/gateway/bot', { headers: { authorization: `Bot ${token}` } })
+} catch (err) {
+  console.error(`error: could not reach Discord: ${err}`)
+  process.exit(1)
+}
 const gateway = (await res.json().catch(() => null)) as { url?: unknown } | null
 if (!res.ok || typeof gateway?.url !== 'string') {
-  console.error(`error: Discord rejected the token (http ${res.status})`)
+  console.error(res.status === 401 ? 'error: Discord rejected the token' : `error: Discord answered http ${res.status}`)
   process.exit(1)
 }
 

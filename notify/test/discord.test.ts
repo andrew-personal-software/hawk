@@ -26,6 +26,7 @@ test('render: bold, italic, code, link, heading, quote, list, fence', () => {
 test('render: link urls escape ) and space', () => {
   assert.equal(first({ link: 'https://l.m/a b)' }), '**T**\n\n[Open](https://l.m/a%20b%29)')
   assert.equal(first({ body: '[x](https://u.v/a)' }), '**T**\n[x](https://u.v/a)')
+  assert.equal(first({ body: 'see https://u.v/a.' }), '**T**\nsee https://u.v/a.')
 })
 test('render: allowed_mentions on every part', () => {
   const parts = render(msg({ body: 'a'.repeat(5000), link: 'https://l.m' }))
@@ -65,6 +66,12 @@ test('render: link fits in the last part, or becomes its own final part with the
   assert.equal(big[0].content.split('\n')[0], `**${'t'.repeat(100)}** (1/2)`)
   assert.equal(big[1].content, url)
   assert.ok(big.every((p) => p.content.length <= 2000))
+})
+test('render: 100+ parts keep every part ≤ 2000', () => {
+  const body = Array(110).fill('a'.repeat(1986)).join('\n\n')
+  const parts = render(msg({ body }))
+  assert.ok(parts.length > 99, String(parts.length))
+  assert.ok(parts.every((p) => p.content.length <= 2000))
 })
 test('mapResponse', () => {
   assert.deepEqual(mapResponse(200, { id: '77' }), { kind: 'ok', ref: '77' })

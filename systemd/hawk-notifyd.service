@@ -1,4 +1,4 @@
-# Message service at 127.0.0.1:3402: queues messages from hawk and apps and sends them to Slack. Installed by install.sh.
+# Message service at 127.0.0.1:3402: queues messages from hawk and apps and sends them to Discord. Installed by install.sh.
 [Unit]
 Description=hawk: notify service
 Wants=network-online.target

@@ -160,7 +160,7 @@ type Platform = {
 ```
 
 The worker only sees `Result`. Each adapter maps its own errors into it. `src/platforms/index.ts` lists the
-adapters. Adding Discord = one new file, one line in that list, a token in `hawk.env`, and `discord:` targets in
+adapters. Adding a platform = one new file, one line in that list, a token in `hawk.env`, and `discord:` targets in
 `routes.ts`.
 
 ## Delivery

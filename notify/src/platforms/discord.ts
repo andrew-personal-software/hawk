@@ -5,7 +5,7 @@ import type { Block, Inline } from '../markdown.ts'
 export type DiscordPayload = { content: string; allowed_mentions: { parse: [] } }
 
 const MAX = 2000
-const SUFFIX = 8 // room for " (99/99)"
+const SUFFIX = 10 // room for " (999/999)"
 const PREFIX = { info: '', warn: '⚠️ ', error: '🚨 ' }
 
 const esc = (s: string) => s.replace(/[\\*_~`|[\]]/g, '\\$&')
@@ -18,7 +18,7 @@ function inline(nodes: Inline[]): string {
       case 'code': return n.v.includes('`') ? `\`\` ${n.v} \`\`` : `\`${n.v}\``
       case 'bold': return `**${inline(n.c)}**`
       case 'italic': return `*${inline(n.c)}*`
-      case 'link': return `[${inline(n.c)}](${encodeUrl(n.url)})`
+      case 'link': return n.c.length === 1 && n.c[0].t === 'text' && n.c[0].v === n.url ? n.url : `[${inline(n.c)}](${encodeUrl(n.url)})`
     }
   }).join('')
 }
@@ -121,7 +121,7 @@ export function makeDiscord(fetchImpl: typeof fetch = fetch, sleep: (ms: number)
         if (i > 0) await sleep(PART_GAP_MS)
         const r = await post(url, body, env.DISCORD_BOT_TOKEN)
         if (r.kind !== 'ok') return r
-        ref ??= r.ref
+        if (i === 0) ref = r.ref
       }
       return { kind: 'ok', ref }
     },
