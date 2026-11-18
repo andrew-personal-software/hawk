@@ -246,8 +246,15 @@ if ! box_has_sha; then
   fail 1 "ssh $SERVER cat /opt/hawk/COMMIT" "box runs '${BOX:-nothing}', expected $SHA or later"
 fi
 # shellcheck disable=SC2016
-run ssh "$SERVER" 'bad=; for f in /opt/hawk/apps/*.env; do . "$f"; [ -e "/opt/$(basename "$f" .env)/current" ] || continue;
-  for u in $SERVICES; do systemctl is-active -q "$u" || bad="$bad $u"; done; done
+# A podman app: its live slot and workers. A systemd app: its SERVICES. Reset per app: each .env is sourced.
+run ssh "$SERVER" 'bad=; for f in /opt/hawk/apps/*.env; do a=$(basename "$f" .env); RUNTIME= SERVICES=; . "$f"
+  if [ "$RUNTIME" = podman ]; then
+    slot=$(hawk state "$a" | jq -r ".slot // empty"); [ -n "$slot" ] || continue
+    units="$a-$slot $(jq -r --arg a "$a" ".workers // {} | keys[] | \"\($a)-\(.)\"" "/etc/hawk/apps/$a.json" 2>/dev/null)"
+  else
+    [ -e "/opt/$a/current" ] || continue; units=$SERVICES
+  fi
+  for u in $units; do systemctl is-active -q "$u" || bad="$bad $u"; done; done
   for u in gatus mlflow caddy hawk-status.timer hawk-heartbeat.timer; do systemctl is-active -q "$u" || bad="$bad $u"; done
   [ -z "$bad" ] || { echo "not active:$bad"; exit 1; }'
 say "box runs ${BOX:0:7}; all services active"
