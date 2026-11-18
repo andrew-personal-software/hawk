@@ -1,0 +1,9 @@
+# Nightly pg_dump of each podman app's schema, plus a tarball of its files, to /var/backups/<app> (keeps 7).
+[Unit]
+Description=hawk: back up podman apps
+After=postgres.service
+OnFailure=hawk-notify@%N.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/hawk backup
