@@ -9,6 +9,7 @@
 #   sudo hawk release <app> <version>  blue/green deploy of a built image (hawk deploy calls it)
 #   sudo hawk backup [app]             pg_dump + files tarball to /var/backups/<app> (keeps 7)
 #   hawk state <app>                   live slot and version as JSON
+#   hawk build <app>                   as hawk-runner, from a checkout with VERSION set: build the image for release
 #   hawk notify <message>  send to the notify service (email if it is down, at most once per 30 min)
 #   hawk heartbeat                     ping healthchecks.io, or /fail when the disk is 90%+ full; email when mlflow fills
 #   hawk mlflow-backup                 copy the MLflow DB to /var/backups/mlflow (keeps 7)
@@ -391,7 +392,7 @@ shift || true
 case $cmd in
   setup | deploy | rollback | runner | notify | heartbeat | status) "cmd_$cmd" "$@" ;;
   release | backup) root "$cmd" "$@"; platform "$cmd" "$@" ;;
-  tasks | state) platform "$cmd" "$@" ;;
+  tasks | state | build) platform "$cmd" "$@" ;;
   mlflow-backup) cmd_mlflow_backup "$@" ;;
   *) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
 esac
