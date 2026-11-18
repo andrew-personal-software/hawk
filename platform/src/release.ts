@@ -130,28 +130,59 @@ export async function release(app: App, version: string, sys: Sys, domain: strin
     const prev = readState(app.name, sys)
     const tar = `${IMAGES}/${app.name}-${version}.tar`, json = `${IMAGES}/${app.name}-${version}.json`
     app = await step('load', async () => {
-      const text = sys.read(json)
-      if (text === null) throw new Error(`no ${json}. Run hawk build first`)
-      const spec = parseSpec(JSON.parse(text), app.name)
+      // hawk-runner owns this dir. Root reads only its regular files, never a link to something else.
+      const runner = Number((await sys.run('id', ['-u', 'hawk-runner'])).trim())
+      for (const p of [json, tar]) {
+        const st = sys.lstat(p)
+        if (st === null) throw new Error(`no ${p}. Run hawk build first`)
+        if (!st.file || st.uid !== runner) throw new Error(`${p} must be a regular file owned by hawk-runner`)
+      }
+      let raw: unknown
+      try { raw = JSON.parse(sys.read(json) ?? '') } catch { throw new Error(`${json} is not valid JSON`) }
+      const spec = parseSpec(raw, app.name)
       // The tar is built by hawk-runner; podman load applies whatever tags it names. Allow only ours.
       const tags = (JSON.parse(await sys.run('tar', ['-xOf', tar, 'manifest.json'])) as { RepoTags?: string[] }[]).map((m) => m.RepoTags)
       if (JSON.stringify(tags) !== JSON.stringify([[image(app, version)]])) throw new Error(`${tar} must hold only ${image(app, version)}, not ${JSON.stringify(tags)}`)
-      sys.write(`/etc/hawk/apps/${app.name}.json`, `${JSON.stringify(spec)}`, 0o644)
       await sys.run('podman', ['load', '-i', tar])
       sys.remove(tar)
       sys.remove(json)
       return { ...app, spec }
     })
-    await step('units', () => writeUnits(app, prev?.slot ?? 'blue', sys))
-    if (app.spec.downtime && prev)
-      await step('downtime', async () => {
-        if (app.spec.web) await sys.run('systemctl', ['stop', `${app.name}-${prev.slot}`])
-        for (const w of Object.keys(app.spec.workers ?? {})) await sys.run('systemctl', ['stop', `${app.name}-${w}`])
+    // Units still hold the old spec until migrate passes, so a restart of the live slot runs the old release.
+    const stopped: string[] = []
+    try {
+      if (app.spec.downtime && prev)
+        await step('downtime', async () => {
+          const units = [...(app.spec.web ? [prev.slot] : []), ...Object.keys(app.spec.workers ?? {})].map((u) => `${app.name}-${u}`)
+          for (const u of units) {
+            stopped.push(u)
+            await sys.run('systemctl', ['stop', u])
+          }
+        })
+      await step('backup', () => backupApp(app, sys, { prune: false }))
+      const migrate = app.spec.migrate
+      if (migrate) await step('migrate', () => sys.run('podman', ['run', ...runFlags(app), image(app, version), ...migrate]))
+    } catch (e) {
+      for (const u of stopped) await sys.run('systemctl', ['start', u]).catch(() => {})
+      throw e
+    }
+    // Until the state moves to the new release, a failure puts the old spec and units back.
+    const spec = `/etc/hawk/apps/${app.name}.json`
+    const paths = [spec, statePath(app.name), ...renderUnits(app, prev?.slot ?? 'blue').keys()]
+    const before = new Map(paths.map((p) => [p, sys.read(p)]))
+    try {
+      await step('units', async () => {
+        sys.write(spec, JSON.stringify(app.spec), 0o644)
+        await writeUnits(app, prev?.slot ?? 'blue', sys)
       })
-    await step('backup', () => backupApp(app, sys, { prune: false }))
-    const migrate = app.spec.migrate
-    if (migrate) await step('migrate', () => sys.run('podman', ['run', ...runFlags(app), image(app, version), ...migrate]))
-    return cutover(app, version, prev, sys, domain)
+      return await cutover(app, version, prev, sys, domain)
+    } catch (e) {
+      if (sys.read(statePath(app.name)) === before.get(statePath(app.name))) {
+        for (const [p, text] of before) if (text === null) sys.remove(p); else sys.write(p, text)
+        await sys.run('systemctl', ['daemon-reload']).catch(() => {})
+      }
+      throw e
+    }
   })
 }
 

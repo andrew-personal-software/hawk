@@ -37,3 +37,9 @@ test('backupApp tars a non-empty volume and prunes', async () => {
   assert.equal(out[1], '/var/backups/dodo/dodo-20261118T120000Z-files.tar.gz')
   assert.deepEqual(f.log.filter((l) => l.startsWith('remove')), [2, 1, 0].map((i) => `remove /var/backups/dodo/dodo-2026110${i}T030000Z.dump`))
 })
+
+test('backupApp removes the .tmp when pg_dump fails', async () => {
+  const f = fakeSys({ answer: (c) => { if (c.args.includes('pg_dump')) { f.files.set(c.opts!.stdoutFile!, 'half'); throw new Error('pg_dump exited 1') } return '' } })
+  await assert.rejects(backupApp(app, f.sys, { prune: false }), /pg_dump/)
+  assert.deepEqual([...f.files.keys()].filter((k) => k.endsWith('.tmp')), [])
+})

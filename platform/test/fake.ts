@@ -1,5 +1,7 @@
 import type { Sys } from '../src/types.ts'
 
+export const RUNNER_UID = 1500
+
 export type Call = { cmd: string; args: string[]; opts?: { input?: string; stdoutFile?: string } }
 
 /** A recording Sys. Override any method; `run` answers from `answer` (throw to fail). */
@@ -17,6 +19,7 @@ export function fakeSys(o: Partial<Sys> & { answer?: (c: Call) => string } = {})
     async get(url) { log.push(`get ${url}`); return { status: 200, body: '{}' } },
     async post(url, json) { posts.push({ url, json }); log.push(`post ${url}`); return { status: 200, body: '{}' } },
     read: (p) => files.get(p) ?? null,
+    lstat: (p) => (files.has(p) ? { file: true, uid: RUNNER_UID } : null),
     write(p, t) { log.push(`write ${p}`); if (files.get(p) === t) return false; files.set(p, t); return true },
     remove(p) { log.push(`remove ${p}`); files.delete(p) },
     list: (d) => [...files.keys()].filter((k) => k.startsWith(`${d}/`)).map((k) => k.slice(d.length + 1)).filter((k) => !k.includes('/')),

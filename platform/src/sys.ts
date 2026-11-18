@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { Sys } from './types.ts'
@@ -14,7 +14,8 @@ async function request(url: string, init: RequestInit, ms: number): Promise<{ st
   }
 }
 
-const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
+/** Where lock files live. Tests point it at a temp dir. */
+export const locks = { dir: '/run' }
 
 export const realSys: Sys = {
   run(cmd, args, opts = {}) {
@@ -38,6 +39,12 @@ export const realSys: Sys = {
   read(p) {
     try { return fs.readFileSync(p, 'utf8') } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e }
   },
+  lstat(p) {
+    try {
+      const s = fs.lstatSync(p)
+      return { file: s.isFile(), uid: s.uid }
+    } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e }
+  },
   write(p, text, mode = 0o644) {
     if (realSys.read(p) === text) return false
     fs.mkdirSync(path.dirname(p), { recursive: true })
@@ -53,25 +60,19 @@ export const realSys: Sys = {
   },
   sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
   now: () => new Date(),
-  /** /run/<name>.lock holds our pid. A lock whose pid is gone (a killed deploy) is taken over. */
+  /**
+   * flock(1) on our open fd of /run/<name>.lock, like hawk-update. The lock belongs to the open file,
+   * so it stays after flock exits and goes when this process closes the fd or dies. The file is never removed.
+   */
   lock(name) {
-    const file = `/run/${name}.lock`
-    for (let i = 0; i < 2; i++) {
-      try {
-        fs.writeFileSync(file, String(process.pid), { flag: 'wx' })
-        const release = () => {
-          process.off('exit', release)
-          if (realSys.read(file) === String(process.pid)) fs.rmSync(file, { force: true })
-        }
-        process.on('exit', release)
-        return release
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
-        const pid = Number(realSys.read(file))
-        if (pid && alive(pid)) break
-        fs.rmSync(file, { force: true })
-      }
+    const { O_WRONLY, O_CREAT, O_NOFOLLOW } = fs.constants
+    const fd = fs.openSync(`${locks.dir}/${name}.lock`, O_WRONLY | O_CREAT | O_NOFOLLOW, 0o600)
+    const r = spawnSync('flock', ['-n', '3'], { stdio: ['ignore', 'ignore', 'pipe', fd] })
+    if (r.status !== 0) {
+      fs.closeSync(fd)
+      throw new Error(r.status === 1 ? 'busy' : `flock: ${r.error?.message ?? r.stderr}`)
     }
-    throw new Error('busy')
+    let held = true
+    return () => { if (held) { held = false; fs.closeSync(fd) } }
   },
 }

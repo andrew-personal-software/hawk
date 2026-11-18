@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { setup } from '../src/setup.ts'
+import { build, setup } from '../src/setup.ts'
 import { HAWK } from '../src/config.ts'
 import { out } from '../src/release.ts'
 import { dodoSpec } from './config.test.ts'
@@ -66,4 +66,21 @@ test('setup takes the app lock, so it cannot race a release', async () => {
   await assert.rejects(setup('dodo', '/src/dodo', sys, D), /busy/)
   assert.ok(!f.files.has('/etc/containers/systemd/dodo-blue.container'))
   assert.ok(!f.calls.some((c) => c.cmd.endsWith('caddy/setup.sh')))
+})
+
+test('build removes tars left by older failed releases of this app', async () => {
+  const f = box()
+  for (const p of ['dodo-1.0.0.tar', 'dodo-1.0.0.json', 'dodo-0.9.0.tar', 'spire-1.0.0.tar']) f.files.set(`/var/lib/hawk-images/${p}`, '')
+  await build('dodo', '/src/dodo', '1.1.0', f.sys)
+  assert.deepEqual(f.sys.list('/var/lib/hawk-images').sort(), ['dodo-1.1.0.json', 'spire-1.0.0.tar'])
+  assert.ok(f.log.indexOf('remove /var/lib/hawk-images/dodo-1.0.0.tar') < f.log.findIndex((l) => l.includes('podman save')))
+})
+
+test('build prunes podman storage older than a week, also when the build fails', async () => {
+  for (const fail of [false, true]) {
+    const f = fakeSys({ answer: (c) => { if (fail && c.args[0] === 'build') throw new Error('build failed'); return '' } })
+    f.files.set('/src/dodo/deploy/hawk.json', JSON.stringify(dodoSpec))
+    await build('dodo', '/src/dodo', '1.1.0', f.sys).catch(() => {})
+    assert.deepEqual(f.calls.at(-1)!.args, ['system', 'prune', '-f', '--filter', 'until=168h'])
+  }
 })

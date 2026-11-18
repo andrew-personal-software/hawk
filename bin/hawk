@@ -323,7 +323,9 @@ cmd_status() {
   # A down postgres must print "down", not stop the page.
   if command -v podman >/dev/null; then
     pgver=$(timeout 5 podman exec postgres psql -U postgres -tAc 'show server_version' 2>/dev/null | awk '{print $1}' | tr -dc 0-9. || true)
-    pgsize=$(timeout 5 podman exec postgres psql -U postgres -d apps -tAc "select pg_size_pretty(pg_database_size('apps'))" 2>/dev/null | tr -dc '0-9A-Za-z ' || true)
+    # One line per schema (tables, indexes and TOAST), biggest first.
+    pgsize=$(timeout 5 podman exec postgres psql -U postgres -d apps -tAc "select n.nspname || ' ' || pg_size_pretty(sum(pg_total_relation_size(c.oid))::bigint) from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r', 'm') and n.nspname not in ('pg_catalog', 'information_schema') group by n.nspname order by sum(pg_total_relation_size(c.oid)) desc" 2>/dev/null |
+      tr -dc '0-9A-Za-z_ \n' | awk 'NF { printf "%s%s", (n++ ? "<br>" : ""), $0 }' || true)
     pgrow="<tr><td>postgres</td><td>$(badge postgres)</td><td>${pgver:-<b class=bad>down</b>}</td><td>${pgsize:--}</td><td>-</td></tr>"
   fi
   tools="<tr><td><a href=\"https://status.$DOMAIN\">gatus</a></td><td>$(badge gatus)</td><td>-</td><td>-</td><td>-</td></tr>

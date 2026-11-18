@@ -17,8 +17,13 @@ export async function backupApp(app: App, sys: Sys, o: { prune: boolean }): Prom
   const base = `${dir}/${app.name}-${stamp(sys.now())}`
   const written: string[] = []
   const put = async (path: string, make: (tmp: string) => Promise<unknown>) => {
-    await make(`${path}.tmp`)
-    await sys.run('mv', [`${path}.tmp`, path])
+    try {
+      await make(`${path}.tmp`)
+      await sys.run('mv', [`${path}.tmp`, path])
+    } catch (e) {
+      sys.remove(`${path}.tmp`)
+      throw e
+    }
     written.push(path)
   }
   await put(`${base}.dump`, (tmp) =>
