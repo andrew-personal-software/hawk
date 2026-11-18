@@ -37,3 +37,8 @@ test('parseAppEnv needs PORT', () => assert.throws(() => parseAppEnv('HEALTH=/x\
 
 const app: App = { name: 'dodo', port: 3420, health: '/api/version', uid: 1, gid: 1, spec: {} }
 test('slotPort', () => { assert.equal(slotPort(app, 'blue'), 3420); assert.equal(slotPort(app, 'green'), 4420) })
+
+test('parseSpec rejects unit name clashes', () => {
+  assert.throws(() => parseSpec({ web: { command: ['x'] }, workers: { blue: ['x'] } }, 'dodo'), /workers\.blue/)
+  assert.throws(() => parseSpec({ workers: { a: ['x'] }, jobs: { a: { command: ['x'], schedule: 'daily' } } }, 'dodo'), /jobs\.a/)
+})

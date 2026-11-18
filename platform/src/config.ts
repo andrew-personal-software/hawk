@@ -80,6 +80,12 @@ export function parseSpec(json: unknown, app: string): AppSpec {
         fail(k, 'unknown field')
     }
   }
+  const seen = new Set(['blue', 'green', 'live'])
+  for (const [kind, names] of [['workers', spec.workers], ['jobs', spec.jobs]] as const)
+    for (const n of Object.keys(names ?? {})) {
+      if (seen.has(n)) fail(`${kind}.${n}`, 'name is used by another unit of this app')
+      seen.add(n)
+    }
   return spec
 }
 
