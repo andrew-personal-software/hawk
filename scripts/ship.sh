@@ -7,7 +7,7 @@
 # command's error, and exits with that command's exit code.
 set -uo pipefail
 
-REPO=minghanminghan/hawk
+REPO=andrew-personal-software/hawk
 SERVER=andrewj@andrewsserver
 TITLE_RE='^(feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert)(\([a-z0-9-]+\))?!?: .+'
 SHELL_FILES=(bin/hawk bin/hawk-update install.sh caddy/setup.sh scripts/ship.sh)

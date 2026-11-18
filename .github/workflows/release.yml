@@ -2,7 +2,7 @@
 # Call it from an app's release workflow, after its tests:
 #   hawk:
 #     needs: test
-#     uses: minghanminghan/hawk/.github/workflows/release.yml@main
+#     uses: andrew-personal-software/hawk/.github/workflows/release.yml@main
 #     permissions:
 #       contents: write
 #     with:
