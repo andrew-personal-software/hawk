@@ -29,7 +29,17 @@ for cmd in systemctl tailscale go node caddy curl jq rsync visudo useradd git fl
 done
 
 step "ports: apps/*.env"
-dupes=$( (echo "PORT=$GATUS_PORT"; echo "PORT=$MLFLOW_PORT"; echo "PORT=$NOTIFY_PORT"; cat "$HERE"/apps/*.env) | sed -n 's/^PORT=//p' | sort | uniq -d)
+# A podman app also uses PORT+1000 for its green slot.
+ports() {
+  local f port
+  echo "$GATUS_PORT"; echo "$MLFLOW_PORT"; echo "$NOTIFY_PORT"
+  for f in "$HERE"/apps/*.env; do
+    port=$(sed -n 's/^PORT=//p' "$f")
+    echo "$port"
+    if grep -q '^RUNTIME=podman' "$f"; then echo $((port + 1000)); fi
+  done
+}
+dupes=$(ports | sort | uniq -d)
 [[ -z $dupes ]] || die "port used twice in apps/*.env (or by gatus/mlflow/notify): $dupes"
 
 step "files: $HAWK, /usr/local/bin/hawk"
