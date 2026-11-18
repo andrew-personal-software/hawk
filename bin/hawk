@@ -283,18 +283,32 @@ badge() {
 # Per app: live version, release, deploy time, previous release, services. Then tools, runners,
 # alerts, box.
 cmd_status() {
-  local out=${1:-} f apps='' runners='' alerts unit name html tools mlver mldata
+  local out=${1:-} f apps='' runners='' alerts unit name html tools mlver mldata pgver pgsize pgrow
   # Saved MLflow UI views (spire's experiment records): filter + sort live in the URL.
   local MLFLOW_VIEWS="<a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27eval%27%20and%20tags.target%20%3D%20%27act1%2Fa0%2Fironclad%2Feval1000%27&amp;orderByKey=attributes.start_time&amp;orderByAsc=false\">Experiments</a> · <a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27idea%27%20and%20tags.verdict%20%3D%20%27planned%27&amp;orderByKey=metrics.%60priority%60&amp;orderByAsc=false\">Queue</a> · <a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27combat-eval%27&amp;orderByKey=attributes.start_time&amp;orderByAsc=false\">Fights</a> · <a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27train%27&amp;compareRunsMode=CHART\">Training</a>"
   for f in "$HAWK"/apps/*.env; do
     apps+=$(
       load "$(basename "$f" .env)"
-      ver=$(curl -fsS -m 3 "http://127.0.0.1:$PORT$HEALTH" 2>/dev/null | sed -n 's/.*"version" *: *"\([^"<>&]*\)".*/\1/p')
-      rel=$(basename "$(readlink "$OPT/current" 2>/dev/null)")
-      at=$(stat -c %y "$OPT/current" 2>/dev/null | cut -c1-16)
-      prev=$(cd "$OPT/releases" 2>/dev/null && ls -1t | grep -vx "$rel" | head -n1)
       svcs=
-      for svc in $SERVICES; do svcs+="$(badge "$svc") $svc<br>"; done
+      if podman_app; then
+        st=$(platform state "$APP" 2>/dev/null || echo '{}')
+        slot=$(jq -r '.slot // empty' <<<"$st" | tr -dc '[:lower:]')
+        hport=$PORT
+        [[ $slot == green ]] && hport=$((PORT + 1000))
+        rel=$(jq -r 'if .version then .slot + " · " + .version else empty end' <<<"$st" | tr -dc 'a-z0-9. ·')
+        at=$(jq -r '.at // empty' <<<"$st" | tr T ' ' | cut -c1-16)
+        prev=$(jq -r '.previous // empty' <<<"$st" | tr -dc 0-9.)
+        list=${slot:+$APP-$slot}
+        for w in $(jq -r '.workers // {} | keys[]' "/etc/hawk/apps/$APP.json" 2>/dev/null); do list+=" $APP-$w"; done
+        for svc in $list; do svcs+="$(badge "$svc") $svc<br>"; done
+      else
+        hport=$PORT
+        rel=$(basename "$(readlink "$OPT/current" 2>/dev/null)")
+        at=$(stat -c %y "$OPT/current" 2>/dev/null | cut -c1-16)
+        prev=$(cd "$OPT/releases" 2>/dev/null && ls -1t | grep -vx "$rel" | head -n1)
+        for svc in $SERVICES; do svcs+="$(badge "$svc") $svc<br>"; done
+      fi
+      ver=$(curl -fsS -m 3 "http://127.0.0.1:$hport$HEALTH" 2>/dev/null | sed -n 's/.*"version" *: *"\([^"<>&]*\)".*/\1/p')
       printf '<tr><td><a href="https://%s.%s">%s</a></td><td>%s</td><td>%s<br><small>%s</small></td><td>%s</td><td>%s</td></tr>\n' \
         "$APP" "$DOMAIN" "$APP" "${ver:-<b class=bad>down</b>}" "${rel:--}" "${at:--}" "${prev:--}" "$svcs"
     )
@@ -305,8 +319,14 @@ cmd_status() {
     mldata=$(df -h --output=pcent,used,size /var/lib/mlflow | tail -1 |
       awk '{ p = $1 + 0; s = $2 " of " $3; print (p >= 90 ? "<b class=bad>" s "</b>" : s) }')
   fi
+  # A down postgres must print "down", not stop the page.
+  if command -v podman >/dev/null; then
+    pgver=$(timeout 5 podman exec postgres psql -U postgres -tAc 'show server_version' 2>/dev/null | awk '{print $1}' | tr -dc 0-9. || true)
+    pgsize=$(timeout 5 podman exec postgres psql -U postgres -d apps -tAc "select pg_size_pretty(pg_database_size('apps'))" 2>/dev/null | tr -dc '0-9A-Za-z ' || true)
+    pgrow="<tr><td>postgres</td><td>$(badge postgres)</td><td>${pgver:-<b class=bad>down</b>}</td><td>${pgsize:--}</td><td>-</td></tr>"
+  fi
   tools="<tr><td><a href=\"https://status.$DOMAIN\">gatus</a></td><td>$(badge gatus)</td><td>-</td><td>-</td><td>-</td></tr>
-<tr><td><a href=\"https://mlflow.$DOMAIN\">mlflow</a></td><td>$(badge mlflow)</td><td>${mlver:-<b class=bad>down</b>}</td><td>$mldata</td><td>${MLFLOW_VIEWS:--}</td></tr>"
+<tr><td><a href=\"https://mlflow.$DOMAIN\">mlflow</a></td><td>$(badge mlflow)</td><td>${mlver:-<b class=bad>down</b>}</td><td>$mldata</td><td>${MLFLOW_VIEWS:--}</td></tr>${pgrow:-}"
   for unit in $(systemctl list-units --all --plain --no-legend 'actions.runner.*' | awk '{print $1}'); do
     name=${unit#actions.runner.}
     runners+="<tr><td>${name%.service}</td><td>$(badge "$unit")</td></tr>"
