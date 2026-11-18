@@ -4,7 +4,7 @@
 # Copies the checkout to /opt/hawk, links /usr/local/bin/hawk, creates hawk-runner, installs the
 # heartbeat timer, the OnFailure alert unit, gatus (uptime page for every app in apps/), the hawk
 # status page, an MLflow server on its own 10G volume and hawk-notifyd (the message service at
-# 127.0.0.1:3402), and serves https://status.<domain>, https://hawk.<domain> and https://mlflow.<domain>
+# 127.0.0.1:3402), Podman with a shared Postgres 17 (Quadlet) for podman apps, and serves https://status.<domain>, https://hawk.<domain> and https://mlflow.<domain>
 # to the tailnet. Alerts go to Discord through hawk-notifyd; Resend emails only when Discord or it is down. The first run takes /etc/hawk/hawk.env from ./hawk.env (git-ignored) if it
 # exists, or asks for its values.
 set -euo pipefail
@@ -24,12 +24,22 @@ die() { echo "error: $*" >&2; exit 1; }
 step() { echo "==> $*"; }
 
 [[ $EUID -eq 0 ]] || die "run as root (sudo $0)"
-for cmd in systemctl tailscale go node caddy curl jq rsync visudo useradd git flock uv findmnt blkid; do
+for cmd in systemctl tailscale go node caddy curl jq rsync visudo useradd git flock uv findmnt blkid openssl apt-get; do
   command -v "$cmd" >/dev/null || die "$cmd not found"
 done
 
 step "ports: apps/*.env"
-dupes=$( (echo "PORT=$GATUS_PORT"; echo "PORT=$MLFLOW_PORT"; echo "PORT=$NOTIFY_PORT"; cat "$HERE"/apps/*.env) | sed -n 's/^PORT=//p' | sort | uniq -d)
+# A podman app also uses PORT+1000 for its green slot.
+ports() {
+  local f port
+  echo "$GATUS_PORT"; echo "$MLFLOW_PORT"; echo "$NOTIFY_PORT"
+  for f in "$HERE"/apps/*.env; do
+    port=$(sed -n 's/^PORT=//p' "$f")
+    echo "$port"
+    if grep -q '^RUNTIME=podman' "$f"; then echo $((port + 1000)); fi
+  done
+}
+dupes=$(ports | sort | uniq -d)
 [[ -z $dupes ]] || die "port used twice in apps/*.env (or by gatus/mlflow/notify): $dupes"
 
 step "files: $HAWK, /usr/local/bin/hawk"
@@ -213,10 +223,43 @@ if ((restart_gatus)) || ! systemctl is-active --quiet gatus; then systemctl rest
 systemctl is-active --quiet gatus || die "gatus did not start. See journalctl -u gatus"
 
 # Last, so a hawk-notifyd failure does not skip mlflow, caddy or gatus.
+# (podman + postgres come after it, so their alerts can reach Discord.)
 systemctl enable hawk-notifyd >/dev/null
 if ((restart_notify)) || ! systemctl is-active --quiet hawk-notifyd; then systemctl restart hawk-notifyd; fi
 for _ in $(seq 1 30); do curl -fsS -m 2 "http://127.0.0.1:$NOTIFY_PORT/healthz" >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS -m 2 "http://127.0.0.1:$NOTIFY_PORT/healthz" >/dev/null 2>&1 || die "hawk-notifyd did not start. See journalctl -u hawk-notifyd"
+
+step "podman + postgres"
+if ! command -v podman >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get install -y podman uidmap netavark aardvark-dns; fi
+# hawk-runner builds images rootless: it needs subuid ranges and a user session.
+if ! grep -q '^hawk-runner:' /etc/subuid 2>/dev/null; then
+  usermod --add-subuids 200000-265535 --add-subgids 200000-265535 hawk-runner
+fi
+loginctl enable-linger hawk-runner
+if [[ ! -f $ETC/postgres.env ]]; then
+  install -m 0600 /dev/null "$ETC/postgres.env"
+  printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 32)" >"$ETC/postgres.env"
+fi
+install -d -m 0755 /etc/containers/systemd /var/lib/hawk /var/lib/hawk/apps "$ETC/apps"
+install -d -m 0700 "$ETC/db" /var/lib/postgres
+install -d -o hawk-runner -g hawk-runner -m 0750 /var/lib/hawk-images
+restart_postgres=0
+for f in "$HERE"/containers/*; do
+  dest=/etc/containers/systemd/$(basename "$f")
+  if [[ ! -f $dest ]] || ! cmp -s "$f" "$dest"; then
+    cp "$f" "$dest"
+    restart_postgres=1
+  fi
+done
+if ((restart_postgres)); then systemctl daemon-reload; fi
+if ((restart_postgres)) || ! systemctl is-active --quiet postgres; then systemctl restart postgres; fi
+for _ in $(seq 1 60); do podman exec postgres pg_isready -q -U postgres 2>/dev/null && break; sleep 1; done
+podman exec postgres pg_isready -q -U postgres || die "postgres did not start. See journalctl -u postgres"
+if [[ -z $(podman exec postgres psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname = 'apps'") ]]; then
+  podman exec postgres createdb -U postgres apps
+fi
+podman exec postgres psql -q -U postgres -d apps -c 'CREATE EXTENSION IF NOT EXISTS pg_trgm'
+systemctl enable --now hawk-backup.timer >/dev/null
 
 cat <<EOF
 
@@ -225,7 +268,7 @@ Notify service: http://127.0.0.1:$NOTIFY_PORT/v1/messages (Discord token: sudo -
 Test the alerts:  sudo hawk notify "hello from hawk"  &&  sudo systemctl start hawk-heartbeat
 
 Next, for each app:
-  sudo hawk runner https://github.com/<owner>/<repo> <token>   # one per repo until they share an org
-    token: gh api -X POST repos/<owner>/<repo>/actions/runners/registration-token -q .token
+  (one time) sudo hawk runner https://github.com/andrew-personal-software <token>
+    token: gh api -X POST orgs/andrew-personal-software/actions/runners/registration-token -q .token
   sudo hawk setup <app> [checkout]
 EOF

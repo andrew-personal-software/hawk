@@ -4,6 +4,12 @@
 #   hawk deploy <app>                  run by the release workflow as hawk-runner, from the app's checkout
 #   sudo hawk rollback <app> [release] switch to the previous (or given) release and restart
 #   sudo hawk runner <repo-or-org-url> <token>   add a GitHub runner with the label "hawk"
+#   hawk tasks <app> <version> ok|failed [error]  comment the deploy on the sparrow tasks in PR titles
+#   Podman apps (RUNTIME=podman in apps/<app>.env) also have:
+#   sudo hawk release <app> <version>  blue/green deploy of a built image (hawk deploy calls it)
+#   sudo hawk backup [app]             pg_dump + files tarball to /var/backups/<app> (keeps 7)
+#   hawk state <app>                   live slot and version as JSON
+#   hawk build <app>                   as hawk-runner, from a checkout with VERSION set: build the image for release
 #   hawk notify <message>  send to the notify service (email if it is down, at most once per 30 min)
 #   hawk heartbeat                     ping healthchecks.io, or /fail when the disk is 90%+ full; email when mlflow fills
 #   hawk mlflow-backup                 copy the MLflow DB to /var/backups/mlflow (keeps 7)
@@ -24,10 +30,15 @@ load() {
   [[ -n $APP && -f $HAWK/apps/$APP.env ]] || die "unknown app '$APP'. Apps: $(cd "$HAWK/apps" && ls | sed 's/\.env$//' | xargs)"
   # shellcheck source=/dev/null
   . "$HAWK/apps/$APP.env"
+  RUNTIME=${RUNTIME:-systemd}
   OPT=/opt/$APP
   DATA=/var/lib/$APP
   BACKUPS=/var/backups/$APP
 }
+
+# The podman side lives in platform/ (TypeScript, run by Node).
+platform() { env HAWK="$HAWK" DOMAIN="$DOMAIN" node "$HAWK/platform/src/main.ts" "$@"; }
+podman_app() { [[ ${RUNTIME:-systemd} == podman ]]; }
 
 env_file() { [[ -r /etc/hawk/hawk.env ]] && . /etc/hawk/hawk.env; true; }
 
@@ -40,6 +51,11 @@ put() {
 cmd_setup() {
   root setup "$@"
   load "$1"
+  if podman_app; then
+    id -u hawk-runner >/dev/null 2>&1 || die "run install.sh first"
+    if [[ -n ${2:-} ]]; then platform setup "$APP" "$(readlink -f "$2")"; else platform setup "$APP"; fi
+    return
+  fi
   local src=${2:-$OPT/current} systemctl unit dest changed=() units=()
   src=$(readlink -f "$src")
   [[ -d $src/deploy ]] || die "no deploy/ in $src. Pass a checkout of $APP: sudo hawk setup $APP <checkout>"
@@ -106,6 +122,11 @@ cmd_setup() {
 cmd_deploy() {
   load "$1"
   : "${VERSION:?set VERSION}"
+  if podman_app; then
+    platform build "$APP"
+    sudo /usr/local/bin/hawk release "$APP" "$VERSION"
+    return
+  fi
   local src r got
   src=$(git rev-parse --show-toplevel)
   r=$OPT/releases/$VERSION-${GITHUB_RUN_ID:-$(date +%s)}
@@ -151,6 +172,7 @@ cmd_deploy() {
 cmd_rollback() {
   root rollback "$@"
   load "$1"
+  if podman_app; then platform rollback "$@"; return; fi
   local cur to=${2:-}
   cur=$(basename "$(readlink -f "$OPT/current")")
   [[ -n $to ]] || to=$(cd "$OPT/releases" && ls -1t | grep -vx "$cur" | head -n1 || true)
@@ -262,18 +284,32 @@ badge() {
 # Per app: live version, release, deploy time, previous release, services. Then tools, runners,
 # alerts, box.
 cmd_status() {
-  local out=${1:-} f apps='' runners='' alerts unit name html tools mlver mldata
+  local out=${1:-} f apps='' runners='' alerts unit name html tools mlver mldata pgver pgsize pgrow
   # Saved MLflow UI views (spire's experiment records): filter + sort live in the URL.
   local MLFLOW_VIEWS="<a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27eval%27%20and%20tags.target%20%3D%20%27act1%2Fa0%2Fironclad%2Feval1000%27&amp;orderByKey=attributes.start_time&amp;orderByAsc=false\">Experiments</a> · <a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27idea%27%20and%20tags.verdict%20%3D%20%27planned%27&amp;orderByKey=metrics.%60priority%60&amp;orderByAsc=false\">Queue</a> · <a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27combat-eval%27&amp;orderByKey=attributes.start_time&amp;orderByAsc=false\">Fights</a> · <a href=\"https://mlflow.$DOMAIN/#/experiments/1/runs?searchFilter=tags.kind%20%3D%20%27train%27&amp;compareRunsMode=CHART\">Training</a>"
   for f in "$HAWK"/apps/*.env; do
     apps+=$(
       load "$(basename "$f" .env)"
-      ver=$(curl -fsS -m 3 "http://127.0.0.1:$PORT$HEALTH" 2>/dev/null | sed -n 's/.*"version" *: *"\([^"<>&]*\)".*/\1/p')
-      rel=$(basename "$(readlink "$OPT/current" 2>/dev/null)")
-      at=$(stat -c %y "$OPT/current" 2>/dev/null | cut -c1-16)
-      prev=$(cd "$OPT/releases" 2>/dev/null && ls -1t | grep -vx "$rel" | head -n1)
       svcs=
-      for svc in $SERVICES; do svcs+="$(badge "$svc") $svc<br>"; done
+      if podman_app; then
+        st=$(platform state "$APP" 2>/dev/null || echo '{}')
+        slot=$(jq -r '.slot // empty' <<<"$st" | tr -dc '[:lower:]')
+        hport=$PORT
+        [[ $slot == green ]] && hport=$((PORT + 1000))
+        rel=$(jq -r 'if .version then .slot + " · " + .version else empty end' <<<"$st" | tr -dc 'a-z0-9. ·')
+        at=$(jq -r '.at // empty' <<<"$st" | tr T ' ' | cut -c1-16)
+        prev=$(jq -r '.previous // empty' <<<"$st" | tr -dc 0-9.)
+        list=${slot:+$APP-$slot}
+        for w in $(jq -r '.workers // {} | keys[]' "/etc/hawk/apps/$APP.json" 2>/dev/null); do list+=" $APP-$w"; done
+        for svc in $list; do svcs+="$(badge "$svc") $svc<br>"; done
+      else
+        hport=$PORT
+        rel=$(basename "$(readlink "$OPT/current" 2>/dev/null)")
+        at=$(stat -c %y "$OPT/current" 2>/dev/null | cut -c1-16)
+        prev=$(cd "$OPT/releases" 2>/dev/null && ls -1t | grep -vx "$rel" | head -n1)
+        for svc in $SERVICES; do svcs+="$(badge "$svc") $svc<br>"; done
+      fi
+      ver=$(curl -fsS -m 3 "http://127.0.0.1:$hport$HEALTH" 2>/dev/null | sed -n 's/.*"version" *: *"\([^"<>&]*\)".*/\1/p')
       printf '<tr><td><a href="https://%s.%s">%s</a></td><td>%s</td><td>%s<br><small>%s</small></td><td>%s</td><td>%s</td></tr>\n' \
         "$APP" "$DOMAIN" "$APP" "${ver:-<b class=bad>down</b>}" "${rel:--}" "${at:--}" "${prev:--}" "$svcs"
     )
@@ -284,8 +320,14 @@ cmd_status() {
     mldata=$(df -h --output=pcent,used,size /var/lib/mlflow | tail -1 |
       awk '{ p = $1 + 0; s = $2 " of " $3; print (p >= 90 ? "<b class=bad>" s "</b>" : s) }')
   fi
+  # A down postgres must print "down", not stop the page.
+  if command -v podman >/dev/null; then
+    pgver=$(timeout 5 podman exec postgres psql -U postgres -tAc 'show server_version' 2>/dev/null | awk '{print $1}' | tr -dc 0-9. || true)
+    pgsize=$(timeout 5 podman exec postgres psql -U postgres -d apps -tAc "select pg_size_pretty(pg_database_size('apps'))" 2>/dev/null | tr -dc '0-9A-Za-z ' || true)
+    pgrow="<tr><td>postgres</td><td>$(badge postgres)</td><td>${pgver:-<b class=bad>down</b>}</td><td>${pgsize:--}</td><td>-</td></tr>"
+  fi
   tools="<tr><td><a href=\"https://status.$DOMAIN\">gatus</a></td><td>$(badge gatus)</td><td>-</td><td>-</td><td>-</td></tr>
-<tr><td><a href=\"https://mlflow.$DOMAIN\">mlflow</a></td><td>$(badge mlflow)</td><td>${mlver:-<b class=bad>down</b>}</td><td>$mldata</td><td>${MLFLOW_VIEWS:--}</td></tr>"
+<tr><td><a href=\"https://mlflow.$DOMAIN\">mlflow</a></td><td>$(badge mlflow)</td><td>${mlver:-<b class=bad>down</b>}</td><td>$mldata</td><td>${MLFLOW_VIEWS:--}</td></tr>${pgrow:-}"
   for unit in $(systemctl list-units --all --plain --no-legend 'actions.runner.*' | awk '{print $1}'); do
     name=${unit#actions.runner.}
     runners+="<tr><td>${name%.service}</td><td>$(badge "$unit")</td></tr>"
@@ -349,6 +391,8 @@ cmd=${1:-}
 shift || true
 case $cmd in
   setup | deploy | rollback | runner | notify | heartbeat | status) "cmd_$cmd" "$@" ;;
+  release | backup) root "$cmd" "$@"; platform "$cmd" "$@" ;;
+  tasks | state | build) platform "$cmd" "$@" ;;
   mlflow-backup) cmd_mlflow_backup "$@" ;;
-  *) sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
+  *) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
 esac

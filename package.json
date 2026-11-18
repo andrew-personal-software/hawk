@@ -6,8 +6,8 @@
   "scripts": {
     "box:install": "ssh -t andrewj@andrewsserver 'cd ~/hawk && git pull --ff-only && sudo ./install.sh'",
     "ship": "scripts/ship.sh",
-    "test": "node --test 'notify/test/*.test.ts'",
-    "typecheck": "tsc -p notify"
+    "test": "node --test 'notify/test/*.test.ts' 'platform/test/*.test.ts'",
+    "typecheck": "tsc -p notify && tsc -p platform"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

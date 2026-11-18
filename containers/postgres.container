@@ -1,0 +1,21 @@
+# The shared Postgres for podman apps. One database, apps; one schema and login per app (hawk setup).
+# Reached by apps as postgres:5432 on the hawk network, and by the box on 127.0.0.1:5432 only.
+[Unit]
+Description=hawk: postgres 17
+OnFailure=hawk-notify@%N.service
+
+[Container]
+ContainerName=postgres
+Image=docker.io/library/postgres:17
+Network=hawk.network
+PublishPort=127.0.0.1:5432:5432
+Volume=/var/lib/postgres:/var/lib/postgresql/data
+EnvironmentFile=/etc/hawk/postgres.env
+HealthCmd=pg_isready -U postgres
+
+[Service]
+Restart=always
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
