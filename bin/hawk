@@ -4,6 +4,11 @@
 #   hawk deploy <app>                  run by the release workflow as hawk-runner, from the app's checkout
 #   sudo hawk rollback <app> [release] switch to the previous (or given) release and restart
 #   sudo hawk runner <repo-or-org-url> <token>   add a GitHub runner with the label "hawk"
+#   hawk tasks <app> <version> ok|failed [error]  comment the deploy on the sparrow tasks in PR titles
+#   Podman apps (RUNTIME=podman in apps/<app>.env) also have:
+#   sudo hawk release <app> <version>  blue/green deploy of a built image (hawk deploy calls it)
+#   sudo hawk backup [app]             pg_dump + files tarball to /var/backups/<app> (keeps 7)
+#   hawk state <app>                   live slot and version as JSON
 #   hawk notify <message>  send to the notify service (email if it is down, at most once per 30 min)
 #   hawk heartbeat                     ping healthchecks.io, or /fail when the disk is 90%+ full; email when mlflow fills
 #   hawk mlflow-backup                 copy the MLflow DB to /var/backups/mlflow (keeps 7)
@@ -24,10 +29,15 @@ load() {
   [[ -n $APP && -f $HAWK/apps/$APP.env ]] || die "unknown app '$APP'. Apps: $(cd "$HAWK/apps" && ls | sed 's/\.env$//' | xargs)"
   # shellcheck source=/dev/null
   . "$HAWK/apps/$APP.env"
+  RUNTIME=${RUNTIME:-systemd}
   OPT=/opt/$APP
   DATA=/var/lib/$APP
   BACKUPS=/var/backups/$APP
 }
+
+# The podman side lives in platform/ (TypeScript, run by Node).
+platform() { env HAWK="$HAWK" DOMAIN="$DOMAIN" node "$HAWK/platform/src/main.ts" "$@"; }
+podman_app() { [[ ${RUNTIME:-systemd} == podman ]]; }
 
 env_file() { [[ -r /etc/hawk/hawk.env ]] && . /etc/hawk/hawk.env; true; }
 
@@ -40,6 +50,11 @@ put() {
 cmd_setup() {
   root setup "$@"
   load "$1"
+  if podman_app; then
+    id -u hawk-runner >/dev/null 2>&1 || die "run install.sh first"
+    if [[ -n ${2:-} ]]; then platform setup "$APP" "$(readlink -f "$2")"; else platform setup "$APP"; fi
+    return
+  fi
   local src=${2:-$OPT/current} systemctl unit dest changed=() units=()
   src=$(readlink -f "$src")
   [[ -d $src/deploy ]] || die "no deploy/ in $src. Pass a checkout of $APP: sudo hawk setup $APP <checkout>"
@@ -106,6 +121,11 @@ cmd_setup() {
 cmd_deploy() {
   load "$1"
   : "${VERSION:?set VERSION}"
+  if podman_app; then
+    platform build "$APP"
+    sudo /usr/local/bin/hawk release "$APP" "$VERSION"
+    return
+  fi
   local src r got
   src=$(git rev-parse --show-toplevel)
   r=$OPT/releases/$VERSION-${GITHUB_RUN_ID:-$(date +%s)}
@@ -151,6 +171,7 @@ cmd_deploy() {
 cmd_rollback() {
   root rollback "$@"
   load "$1"
+  if podman_app; then platform rollback "$@"; return; fi
   local cur to=${2:-}
   cur=$(basename "$(readlink -f "$OPT/current")")
   [[ -n $to ]] || to=$(cd "$OPT/releases" && ls -1t | grep -vx "$cur" | head -n1 || true)
@@ -349,6 +370,8 @@ cmd=${1:-}
 shift || true
 case $cmd in
   setup | deploy | rollback | runner | notify | heartbeat | status) "cmd_$cmd" "$@" ;;
+  release | backup) root "$cmd" "$@"; platform "$cmd" "$@" ;;
+  tasks | state) platform "$cmd" "$@" ;;
   mlflow-backup) cmd_mlflow_backup "$@" ;;
-  *) sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
+  *) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
 esac

@@ -1,6 +1,7 @@
 import type { App, AppSpec, Slot, Sys } from './types.ts'
 
 export const HAWK = process.env.HAWK ?? '/opt/hawk'
+export const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+$/
 export const NAME = /^[a-z][a-z0-9-]{0,20}$/
 const ENV_KEY = /^[A-Z_][A-Z0-9_]*$/
 const RESERVED = new Set(['DATABASE_URL', 'PORT'])

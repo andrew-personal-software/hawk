@@ -1,6 +1,6 @@
 import { backupApp } from './backup.ts'
 import { renderSite } from './caddy.ts'
-import { parseSpec, slotPort } from './config.ts'
+import { parseSpec, slotPort, VERSION } from './config.ts'
 import { dbEnvPath } from './db.ts'
 import { renderUnits } from './quadlet.ts'
 import type { App, AppState, Slot, Sys } from './types.ts'
@@ -14,7 +14,6 @@ export class DeployError extends Error {
 }
 
 export const out = { log: (s: string) => console.log(s) }
-export const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+$/
 export const statePath = (app: string) => `/var/lib/hawk/apps/${app}.json`
 const IMAGES = '/var/lib/hawk-images'
 const other = (s: Slot): Slot => (s === 'blue' ? 'green' : 'blue')

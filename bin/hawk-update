@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Updates hawk on the mini PC to GitHub main, then re-runs `hawk setup` for each set-up app (it
-# restarts a service only when its units changed). install.sh copies this to /usr/local/sbin and
+# Updates hawk on the mini PC to GitHub main, then re-runs `hawk setup` for each set-up app (a systemd
+# app restarts a service only when its units changed; a podman app only rewrites its units). install.sh copies this to /usr/local/sbin and
 # lets the admin user run it with no password: it only ever deploys what is on main.
 #   sudo hawk-update
 set -euo pipefail
@@ -26,7 +26,8 @@ main() {
   local f app
   for f in /opt/hawk/apps/*.env; do
     app=$(basename "$f" .env)
-    if [[ -e /opt/$app/current ]]; then
+    # A podman app is set up once it has deployed (state file); a systemd app once it has a release.
+    if [[ -e /var/lib/hawk/apps/$app.json || -e /opt/$app/current ]]; then
       echo "==> hawk setup $app"
       hawk setup "$app"
     else
