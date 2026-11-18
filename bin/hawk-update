@@ -8,6 +8,12 @@ set -euo pipefail
 SRC=/var/lib/hawk-src
 REPO=https://github.com/andrew-personal-software/hawk
 
+# A podman app is set up once it has deployed (state file); a systemd app once it has a release.
+# A podman app's first setup needs a checkout (sudo hawk setup <app> <checkout>), so it is skipped until then.
+deployed() {
+  if grep -q '^RUNTIME=podman' "$1"; then [[ -e ${STATE_DIR:-/var/lib/hawk/apps}/$2.json ]]; else [[ -e ${OPT_DIR:-/opt}/$2/current ]]; fi
+}
+
 # All in a function so bash has read the whole file before install.sh replaces it.
 main() {
   [[ $EUID -eq 0 ]] || { echo "error: run as root (sudo hawk-update)" >&2; exit 1; }
@@ -26,8 +32,7 @@ main() {
   local f app
   for f in /opt/hawk/apps/*.env; do
     app=$(basename "$f" .env)
-    # A podman app is set up once it has deployed (state file); a systemd app once it has a release.
-    if [[ -e /var/lib/hawk/apps/$app.json || -e /opt/$app/current ]]; then
+    if deployed "$f" "$app"; then
       echo "==> hawk setup $app"
       hawk setup "$app"
     else
