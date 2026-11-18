@@ -42,3 +42,15 @@ test('parseSpec rejects unit name clashes', () => {
   assert.throws(() => parseSpec({ web: { command: ['x'] }, workers: { blue: ['x'] } }, 'dodo'), /workers\.blue/)
   assert.throws(() => parseSpec({ workers: { a: ['x'] }, jobs: { a: { command: ['x'], schedule: 'daily' } } }, 'dodo'), /jobs\.a/)
 })
+
+test('parseSpec rejects control characters in every string', () => {
+  const nl = 'x\nPodmanArgs=--privileged'
+  for (const [json, re] of [
+    [{ web: { command: [nl] } }, /web\.command/],
+    [{ migrate: ['node', nl] }, /migrate/],
+    [{ workers: { w: [nl] } }, /workers\.w/],
+    [{ jobs: { j: { command: ['x'], schedule: 'daily\nUnit=hawk-update.service' } } }, /jobs\.j\.schedule/],
+    [{ env: { A: 'a\rb' } }, /env\.A/],
+    [{ envFiles: ['/etc/dodo/a\n.env'] }, /envFiles\[0\]/],
+  ] as const) assert.throws(() => parseSpec(json, 'dodo'), re)
+})

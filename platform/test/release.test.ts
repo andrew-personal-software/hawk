@@ -11,10 +11,12 @@ const STATE = '/var/lib/hawk/apps/dodo.json'
 const SITE = '/etc/caddy/sites/dodo.caddy'
 const app: App = { name: 'dodo', port: 3420, health: '/api/version', uid: 990, gid: 991, spec: dodoSpec }
 
+const manifest = (c: Call) => (c.cmd === 'tar' ? JSON.stringify([{ RepoTags: ['localhost/dodo:1.1.0'] }]) : '')
+
 function setup(o: { state?: object; spec?: AppSpec; version?: string; answer?: (c: Call) => string; health?: string } = {}) {
   const version = o.version ?? '1.1.0'
   const f = fakeSys({
-    answer: o.answer,
+    answer: (c) => (o.answer ? o.answer(c) : manifest(c)),
     get: async (url) => { f.log.push(`get ${url}`); return { status: 200, body: o.health ?? JSON.stringify({ version }) } },
   })
   if (o.state) f.files.set(STATE, JSON.stringify(o.state))
@@ -65,7 +67,7 @@ test('first deploy: blue, nothing stopped, previous null', async () => {
 })
 
 test('migrate fails → live slot untouched, site never written', async () => {
-  const f = setup({ state: blue, answer: (c) => { if (c.args[0] === 'run') throw new Error('migration 3 failed'); return '' } })
+  const f = setup({ state: blue, answer: (c) => { if (c.args[0] === 'run') throw new Error('migration 3 failed'); return manifest(c) } })
   assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'migrate')
   assert.ok(!f.log.some((l) => l.includes('systemctl restart dodo-green')))
   assert.ok(!f.files.has(SITE))
@@ -83,7 +85,7 @@ test('health never shows the new version → idle stopped, site and state untouc
 })
 
 test('old slot will not stop → state already says green', async () => {
-  const f = setup({ state: blue, answer: (c) => { if (c.cmd === 'systemctl' && c.args.join(' ') === 'stop dodo-blue') throw new Error('timeout'); return '' } })
+  const f = setup({ state: blue, answer: (c) => { if (c.cmd === 'systemctl' && c.args.join(' ') === 'stop dodo-blue') throw new Error('timeout'); return manifest(c) } })
   assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'stop')
   assert.deepEqual(JSON.parse(f.files.get(STATE)!).slot, 'green')
   assert.equal(JSON.parse(f.files.get(STATE)!).version, '1.1.0')
@@ -109,7 +111,7 @@ test('workers restart on the live image', async () => {
 })
 
 test('prune keeps the 3 newest version tags', async () => {
-  const f = setup({ state: blue, answer: (c) => (c.args[0] === 'images' ? '1.0.0\n1.10.0\n1.9.0\n1.1.0\nblue\nlive\n0.9.0\n' : '') })
+  const f = setup({ state: blue, answer: (c) => (c.args[0] === 'images' ? '1.0.0\n1.10.0\n1.9.0\n1.1.0\nblue\nlive\n0.9.0\n' : manifest(c)) })
   await release(app, '1.1.0', f.sys, D)
   const rmi = f.calls.filter((c) => c.args[0] === 'rmi').map((c) => c.args.at(-1))
   assert.deepEqual(rmi, ['localhost/dodo:1.0.0', 'localhost/dodo:0.9.0'])
@@ -129,4 +131,17 @@ test('rollback green@1.1.0 → blue@1.0.0', async () => {
 test('rollback with no state fails', async () => {
   const f = setup()
   assert.equal(await step(rollback(app, undefined, f.sys, D)), 'state')
+})
+
+test('a tar whose manifest names another image is refused before podman load', async () => {
+  const f = setup({ state: blue, answer: (c) => (c.cmd === 'tar' ? JSON.stringify([{ RepoTags: ['docker.io/library/postgres:17'] }]) : '') })
+  assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'load')
+  assert.ok(!f.calls.some((c) => c.args[0] === 'load'))
+})
+
+test('old slot will not stop → [Install] already moved to the new slot', async () => {
+  const f = setup({ state: blue, answer: (c) => { if (c.cmd === 'systemctl' && c.args.join(' ') === 'stop dodo-blue') throw new Error('timeout'); return manifest(c) } })
+  assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'stop')
+  assert.match(f.files.get('/etc/containers/systemd/dodo-green.container')!, /\[Install\]/)
+  assert.doesNotMatch(f.files.get('/etc/containers/systemd/dodo-blue.container')!, /\[Install\]/)
 })

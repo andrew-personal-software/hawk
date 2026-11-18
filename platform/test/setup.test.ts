@@ -59,3 +59,11 @@ const main = (...args: string[]) => {
 }
 test('main release with a bad version', () => assert.deepEqual(main('release', 'dodo', '1.2'), { code: 1, out: 'error: version must look like 1.2.3\n' }))
 test('main with an unknown command', () => assert.equal(main('nope').code, 1))
+
+test('setup takes the app lock, so it cannot race a release', async () => {
+  const f = box()
+  const sys = { ...f.sys, lock: () => { throw new Error('busy') } }
+  await assert.rejects(setup('dodo', '/src/dodo', sys, D), /busy/)
+  assert.ok(!f.files.has('/etc/containers/systemd/dodo-blue.container'))
+  assert.ok(!f.calls.some((c) => c.cmd.endsWith('caddy/setup.sh')))
+})

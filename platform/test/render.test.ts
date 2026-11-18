@@ -65,3 +65,8 @@ test('Exec quotes arguments with spaces', () =>
 
 test('renderSite', () =>
   assert.equal(renderSite('dodo', 'andrewminghanjiang.com', 4420), 'dodo.andrewminghanjiang.com {\n\timport tailnet\n\treverse_proxy 127.0.0.1:4420\n}'))
+
+test('quote refuses control characters', async () => {
+  const { quote } = await import('../src/quadlet.ts')
+  assert.throws(() => quote('a\nb'), /control/)
+})

@@ -94,6 +94,8 @@ async function cutover(app: App, version: string, prev: AppState | null, sys: Sy
     })
   }
   await step('state', () => sys.write(statePath(app.name), `${JSON.stringify(state)}\n`))
+  // Now, not after the stop: a reboot after a failed stop must start the slot Caddy points at.
+  await step('units', () => writeUnits(app, state.slot, sys))
   if (app.spec.web && old) {
     await step('drain', () => sys.sleep(5000))
     await step('stop', () => sys.run('systemctl', ['stop', `${app.name}-${old}`]))
@@ -102,7 +104,6 @@ async function cutover(app: App, version: string, prev: AppState | null, sys: Sy
     await sys.run('podman', ['tag', image(app, version), image(app, 'live')])
     for (const w of Object.keys(app.spec.workers ?? {})) await sys.run('systemctl', ['restart', `${app.name}-${w}`])
   })
-  await step('units', () => writeUnits(app, state.slot, sys))
   await step('prune', async () => {
     const tags = (await sys.run('podman', ['images', '--format', '{{.Tag}}', `localhost/${app.name}`])).split('\n').filter((t) => VERSION.test(t))
     const byNewest = [...new Set(tags)].sort((a, b) => cmpVersion(b, a))
@@ -132,6 +133,9 @@ export async function release(app: App, version: string, sys: Sys, domain: strin
       const text = sys.read(json)
       if (text === null) throw new Error(`no ${json}. Run hawk build first`)
       const spec = parseSpec(JSON.parse(text), app.name)
+      // The tar is built by hawk-runner; podman load applies whatever tags it names. Allow only ours.
+      const tags = (JSON.parse(await sys.run('tar', ['-xOf', tar, 'manifest.json'])) as { RepoTags?: string[] }[]).map((m) => m.RepoTags)
+      if (JSON.stringify(tags) !== JSON.stringify([[image(app, version)]])) throw new Error(`${tar} must hold only ${image(app, version)}, not ${JSON.stringify(tags)}`)
       sys.write(`/etc/hawk/apps/${app.name}.json`, `${JSON.stringify(spec)}`, 0o644)
       await sys.run('podman', ['load', '-i', tar])
       sys.remove(tar)

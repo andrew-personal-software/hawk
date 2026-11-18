@@ -5,12 +5,15 @@ export const VERSION = /^[0-9]+\.[0-9]+\.[0-9]+$/
 export const NAME = /^[a-z][a-z0-9-]{0,20}$/
 const ENV_KEY = /^[A-Z_][A-Z0-9_]*$/
 const RESERVED = new Set(['DATABASE_URL', 'PORT'])
+// Spec strings land in root-owned unit files: a newline there would add a line of its own.
+const CTRL = /[\x00-\x1f\x7f]/
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 function fail(path: string, why: string): never { throw new Error(`${path}: ${why}`) }
 
 function command(v: unknown, path: string): string[] {
   if (!Array.isArray(v) || v.length === 0 || !v.every((s) => typeof s === 'string' && s !== '')) fail(path, 'must be a non-empty list of strings')
+  if (v.some((s) => CTRL.test(s))) fail(path, 'must not hold control characters')
   return v
 }
 
@@ -40,7 +43,7 @@ export function parseSpec(json: unknown, app: string): AppSpec {
       case 'jobs':
         spec.jobs = record(v, 'jobs', (j, p) => {
           if (!isObj(j)) fail(p, 'must be an object')
-          if (typeof j.schedule !== 'string' || !j.schedule.trim()) fail(`${p}.schedule`, 'must be a systemd OnCalendar value')
+          if (typeof j.schedule !== 'string' || !j.schedule.trim() || CTRL.test(j.schedule)) fail(`${p}.schedule`, 'must be a systemd OnCalendar value')
           return { command: command(j.command, `${p}.command`), schedule: j.schedule }
         })
         break
@@ -53,7 +56,7 @@ export function parseSpec(json: unknown, app: string): AppSpec {
         for (const [ek, ev] of Object.entries(v)) {
           if (!ENV_KEY.test(ek)) fail(`env.${ek}`, `key must match ${ENV_KEY}`)
           if (RESERVED.has(ek)) fail(`env.${ek}`, 'is set by hawk')
-          if (typeof ev !== 'string' || /\n/.test(ev)) fail(`env.${ek}`, 'must be a one-line string')
+          if (typeof ev !== 'string' || CTRL.test(ev)) fail(`env.${ek}`, 'must be a one-line string')
           env[ek] = ev
         }
         spec.env = env
@@ -62,7 +65,7 @@ export function parseSpec(json: unknown, app: string): AppSpec {
       case 'envFiles':
         if (!Array.isArray(v)) fail('envFiles', 'must be a list')
         spec.envFiles = v.map((f, i) => {
-          if (typeof f !== 'string' || !f.startsWith(`/etc/${app}/`) || f.includes('..')) fail(`envFiles[${i}]`, `must be a file under /etc/${app}/`)
+          if (typeof f !== 'string' || !f.startsWith(`/etc/${app}/`) || f.includes('..') || CTRL.test(f)) fail(`envFiles[${i}]`, `must be a file under /etc/${app}/`)
           return f
         })
         break

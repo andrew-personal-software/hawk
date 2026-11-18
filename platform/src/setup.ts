@@ -1,7 +1,7 @@
 import { HAWK, loadApp, parseSpec, slotPort, VERSION } from './config.ts'
 import { ensureDb } from './db.ts'
 import { out, readState, writeUnits } from './release.ts'
-import type { Sys } from './types.ts'
+import type { App, Sys } from './types.ts'
 
 export const specPath = (app: string) => `/etc/hawk/apps/${app}.json`
 export const IMAGES = '/var/lib/hawk-images'
@@ -26,6 +26,18 @@ export async function setup(name: string, checkout: string | undefined, sys: Sys
   await ensureDb(name, sys)
 
   const app = await loadApp(name, sys)
+  // Same lock as release: a deploy mid-cutover would otherwise get its slot switched back.
+  const unlock = sys.lock(`hawk-${name}`)
+  try {
+    await liveSetup(app, sys)
+  } finally {
+    unlock()
+  }
+  out.log(`Done. ${name} is at https://${name}.${domain}. The first deploy starts it.`)
+}
+
+async function liveSetup(app: App, sys: Sys): Promise<void> {
+  const name = app.name, spec = app.spec
   const live = readState(name, sys)?.slot ?? 'blue'
   out.log(`==> units (live slot: ${live})`)
   await writeUnits(app, live, sys)
@@ -47,7 +59,6 @@ export async function setup(name: string, checkout: string | undefined, sys: Sys
   }
 
   await sys.run(`${HAWK}/caddy/setup.sh`, [name, `127.0.0.1:${slotPort(app, live)}`])
-  out.log(`Done. ${name} is at https://${name}.${domain}. The first deploy starts it.`)
 }
 
 /** Runner, from the tag checkout. Builds the image and hands it to root through /var/lib/hawk-images. */

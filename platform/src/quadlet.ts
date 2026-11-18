@@ -5,7 +5,10 @@ export const QUADLET_DIR = '/etc/containers/systemd'
 export const SYSTEMD_DIR = '/etc/systemd/system'
 
 /** Quotes one word the way systemd and Quadlet split lines. */
-export const quote = (s: string): string => (/^[\w@%+=:,./-]+$/.test(s) ? s : `"${s.replace(/[\\"]/g, '\\$&')}"`)
+export function quote(s: string): string {
+  if (/[\x00-\x1f\x7f]/.test(s)) throw new Error(`refusing a unit value with control characters: ${JSON.stringify(s)}`)
+  return /^[\w@%+=:,./-]+$/.test(s) ? s : `"${s.replace(/[\\"]/g, '\\$&')}"`
+}
 
 /** The podman options every container of an app shares. Also used for the migrate run. */
 export function containerLines(app: App): string[] {
