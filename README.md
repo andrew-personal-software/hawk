@@ -17,7 +17,7 @@ Deploys and monitors the apps on the mini PC (`andrewsserver`). Each app runs as
 ## Install or update (mini PC)
 
 ```sh
-git clone https://github.com/minghanminghan/hawk ~/hawk   # first time
+git clone https://github.com/andrew-personal-software/hawk ~/hawk   # first time
 cd ~/hawk && git pull && sudo ./install.sh
 ```
 
@@ -72,21 +72,24 @@ curl -fsS http://127.0.0.1:3402/v1/messages -d '{
      test: ...
      hawk:
        needs: test
-       uses: minghanminghan/hawk/.github/workflows/release.yml@main
+       uses: andrew-personal-software/hawk/.github/workflows/release.yml@main
        permissions:
          contents: write
        with:
          app: <app>
    ```
 
-4. On the box: add a runner for the repo, then set up the app from a checkout:
+4. On the box: set up the app from a checkout:
 
    ```sh
-   gh api -X POST repos/minghanminghan/<repo>/actions/runners/registration-token -q .token   # laptop
-   sudo hawk runner https://github.com/minghanminghan/<repo> <token>
    sudo hawk setup <app> ~/<checkout>
    ```
 
 5. Push to `main`. The release deploys itself.
 
-GitHub shares one runner between repos only inside an org. Until the repos move to one, each repo needs its own `hawk runner` line. All of them use the `hawk` label.
+One org runner with the `hawk` label serves every repo in `andrew-personal-software`. A new repo needs no runner step. To add the runner again (one time):
+
+```sh
+gh api -X POST orgs/andrew-personal-software/actions/runners/registration-token -q .token   # laptop
+sudo hawk runner https://github.com/andrew-personal-software <token>
+```
