@@ -69,8 +69,16 @@ export async function build(name: string, checkout: string, version: string, sys
   const spec = parseSpec(JSON.parse(text), name)
   const tag = `localhost/${name}:${version}`
   out.log(`==> build ${tag}`)
-  await sys.run('podman', ['build', '--build-arg', `VERSION=${version}`, '-f', `${checkout}/Containerfile`, '-t', tag, checkout])
-  await sys.run('podman', ['save', '-o', `${IMAGES}/${name}-${version}.tar`, tag])
-  sys.write(`${IMAGES}/${name}-${version}.json`, JSON.stringify(spec), 0o640)
-  await sys.run('podman', ['rmi', tag])
+  try {
+    await sys.run('podman', ['build', '--build-arg', `VERSION=${version}`, '-f', `${checkout}/Containerfile`, '-t', tag, checkout])
+    // One deploy per app at a time, so any older tar of this app is from a release that failed.
+    const ours = new RegExp(`^${name}-\\d+\\.\\d+\\.\\d+\\.(tar|json)$`)
+    for (const f of sys.list(IMAGES)) if (ours.test(f)) sys.remove(`${IMAGES}/${f}`)
+    await sys.run('podman', ['save', '-o', `${IMAGES}/${name}-${version}.tar`, tag])
+    sys.write(`${IMAGES}/${name}-${version}.json`, JSON.stringify(spec), 0o640)
+    await sys.run('podman', ['rmi', tag])
+  } finally {
+    // Keeps a week of layer cache so builds stay fast.
+    await sys.run('podman', ['system', 'prune', '-f', '--filter', 'until=168h']).catch((e: Error) => out.log(`warning: prune: ${e.message}`))
+  }
 }

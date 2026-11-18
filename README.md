@@ -79,7 +79,7 @@ curl -fsS http://127.0.0.1:3402/v1/messages -d '{
      | `env` | extra `KEY: value` env. `DATABASE_URL` and `PORT` are set by hawk. |
      | `envFiles` | extra env files, only under `/etc/<app>/` (secrets). |
      | `tmpfs` | writable paths in the read-only container, like `/app/.next/cache`. |
-     | `downtime` | `true` for a release whose migration breaks the live version: hawk stops the app before it migrates. |
+     | `downtime` | `true` for a release whose migration breaks the live version: hawk stops the app before it migrates, and starts it again if the backup or migration fails. |
 
      Commands are lists, like `["node", "dist/migrate.js"]`. Every container gets `DATABASE_URL`, `PORT=3000`, the host dir `/var/lib/<app>` at `/data` (uploaded files go there), a read-only root, `/tmp`, no capabilities, and runs as the app's system user.
    - Its migrations. **A migration must not break the live version**: add columns and tables, do not rename or drop them in the same release. If you must, set `"downtime": true` for that release.

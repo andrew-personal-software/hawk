@@ -19,6 +19,7 @@ export type Sys = {
   get(url: string): Promise<{ status: number; body: string }> // status 0 on connect error
   post(url: string, json: unknown): Promise<{ status: number; body: string }>
   read(path: string): string | null
+  lstat(path: string): { file: boolean; uid: number } | null // null when missing; a symlink is not a file
   write(path: string, text: string, mode?: number): boolean // false when unchanged
   remove(path: string): void
   list(dir: string): string[]

@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { DeployError, out, release, rollback } from '../src/release.ts'
+import { renderUnits } from '../src/quadlet.ts'
 import type { App, AppSpec } from '../src/types.ts'
 import { dodoSpec } from './config.test.ts'
-import { fakeSys, type Call } from './fake.ts'
+import { fakeSys, RUNNER_UID, type Call } from './fake.ts'
 
 out.log = () => {}
 const D = 'andrewminghanjiang.com'
@@ -11,7 +12,8 @@ const STATE = '/var/lib/hawk/apps/dodo.json'
 const SITE = '/etc/caddy/sites/dodo.caddy'
 const app: App = { name: 'dodo', port: 3420, health: '/api/version', uid: 990, gid: 991, spec: dodoSpec }
 
-const manifest = (c: Call) => (c.cmd === 'tar' ? JSON.stringify([{ RepoTags: ['localhost/dodo:1.1.0'] }]) : '')
+const manifest = (c: Call) =>
+  c.cmd === 'tar' ? JSON.stringify([{ RepoTags: ['localhost/dodo:1.1.0'] }]) : c.cmd === 'id' ? `${RUNNER_UID}\n` : ''
 
 function setup(o: { state?: object; spec?: AppSpec; version?: string; answer?: (c: Call) => string; health?: string } = {}) {
   const version = o.version ?? '1.1.0'
@@ -37,8 +39,8 @@ test('happy path blue@1.0.0 → green@1.1.0', async () => {
   assert.equal(f.files.get('/etc/hawk/apps/dodo.json'), JSON.stringify(dodoSpec))
   assert.ok(!f.files.has('/var/lib/hawk-images/dodo-1.1.0.tar'))
   const L = f.log
-  const order = ['lock hawk-dodo', 'podman load -i /var/lib/hawk-images/dodo-1.1.0.tar', 'write /etc/containers/systemd/dodo-blue.container',
-    'pg_dump', 'podman run --rm', 'podman tag localhost/dodo:1.1.0 localhost/dodo:green', 'systemctl restart dodo-green',
+  const order = ['lock hawk-dodo', 'podman load -i /var/lib/hawk-images/dodo-1.1.0.tar', 'pg_dump', 'podman run --rm',
+    'write /etc/containers/systemd/dodo-blue.container', 'podman tag localhost/dodo:1.1.0 localhost/dodo:green', 'systemctl restart dodo-green',
     'get http://127.0.0.1:4420/api/version', `write ${SITE}`, 'systemctl reload caddy', `write ${STATE}`, 'sleep 5000',
     'systemctl stop dodo-blue', 'podman tag localhost/dodo:1.1.0 localhost/dodo:live', 'podman image prune -f', 'unlock hawk-dodo']
   for (let i = 1; i < order.length; i++) assert.ok(at(L, order[i - 1]) < at(L, order[i]), `${order[i - 1]} before ${order[i]}`)
@@ -144,4 +146,65 @@ test('old slot will not stop → [Install] already moved to the new slot', async
   assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'stop')
   assert.match(f.files.get('/etc/containers/systemd/dodo-green.container')!, /\[Install\]/)
   assert.doesNotMatch(f.files.get('/etc/containers/systemd/dodo-blue.container')!, /\[Install\]/)
+})
+
+const failMigrate = (c: Call) => { if (c.args[0] === 'run') throw new Error('migration 3 failed'); return manifest(c) }
+
+test('downtime: migrate fails → the old slot and workers start again', async () => {
+  const f = setup({ state: blue, spec: { ...dodoSpec, downtime: true, workers: { w: ['node', 'w.js'] } }, answer: failMigrate })
+  assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'migrate')
+  assert.ok(at(f.log, 'podman run --rm') < at(f.log, 'systemctl start dodo-blue'))
+  assert.ok(f.log.includes('run systemctl start dodo-w'))
+})
+
+test('downtime: backup fails → the old slot starts again', async () => {
+  const f = setup({ state: blue, spec: { ...dodoSpec, downtime: true }, answer: (c) => { if (c.args.includes('pg_dump')) throw new Error('disk full'); return manifest(c) } })
+  assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'backup')
+  assert.ok(f.log.includes('run systemctl start dodo-blue'))
+})
+
+test('migrate fails → spec and unit files keep the old release', async () => {
+  const f = setup({ state: blue, spec: { ...dodoSpec, env: { NEW: '1' } }, answer: failMigrate })
+  f.files.set('/etc/hawk/apps/dodo.json', JSON.stringify(dodoSpec))
+  assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'migrate')
+  assert.equal(f.files.get('/etc/hawk/apps/dodo.json'), JSON.stringify(dodoSpec))
+  assert.ok(!f.log.some((l) => l.startsWith('write /etc/containers/systemd/')))
+})
+
+const IMG = '/var/lib/hawk-images/dodo-1.1.0'
+for (const [what, file, st] of [
+  ['a symlinked json', 'json', { file: false, uid: RUNNER_UID }],
+  ['a symlinked tar', 'tar', { file: false, uid: RUNNER_UID }],
+  ['a json not owned by hawk-runner', 'json', { file: true, uid: 0 }],
+] as const)
+  test(`${what} is refused before it is read`, async () => {
+    const f = setup({ state: blue }), reads: string[] = []
+    const sys = { ...f.sys, lstat: (p: string) => (p === `${IMG}.${file}` ? st : f.sys.lstat(p)), read: (p: string) => { reads.push(p); return f.sys.read(p) } }
+    assert.equal(await step(release(app, '1.1.0', sys, D)), 'load')
+    assert.ok(!f.calls.some((c) => c.cmd === 'tar' || c.args[0] === 'load'))
+    assert.deepEqual(reads.filter((p) => p.startsWith(IMG)), [])
+  })
+
+test('a json that does not parse does not show its text in the error', async () => {
+  const f = setup({ state: blue })
+  f.files.set(`${IMG}.json`, 'root:$6$secret:19000:0:99999:7:::')
+  await assert.rejects(release(app, '1.1.0', f.sys, D), (e: Error) => !e.message.includes('root') && /not valid JSON/.test(e.message))
+})
+
+test('health fails → spec and unit files go back to the old release', async () => {
+  const f = setup({ state: blue, spec: { ...dodoSpec, env: { NEW: '1' }, workers: { w: ['node', 'w.js'] } }, health: '{"version":"1.0.0"}' })
+  const old = new Map([['/etc/hawk/apps/dodo.json', JSON.stringify(dodoSpec)], ...renderUnits(app, 'blue')])
+  for (const [p, t] of old) f.files.set(p, t)
+  assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'health')
+  for (const [p, t] of old) assert.equal(f.files.get(p), t, p)
+  assert.ok(!f.files.has('/etc/containers/systemd/dodo-w.container'))
+  assert.equal(f.log.at(-2), 'run systemctl daemon-reload')
+})
+
+test('old slot will not stop → new spec and units stay', async () => {
+  const f = setup({ state: blue, spec: { ...dodoSpec, env: { NEW: '1' } }, answer: (c) => { if (c.cmd === 'systemctl' && c.args.join(' ') === 'stop dodo-blue') throw new Error('timeout'); return manifest(c) } })
+  f.files.set('/etc/hawk/apps/dodo.json', JSON.stringify(dodoSpec))
+  assert.equal(await step(release(app, '1.1.0', f.sys, D)), 'stop')
+  assert.match(f.files.get('/etc/hawk/apps/dodo.json')!, /NEW/)
+  assert.match(f.files.get('/etc/containers/systemd/dodo-green.container')!, /NEW=1/)
 })
