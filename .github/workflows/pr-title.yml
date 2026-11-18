@@ -1,0 +1,38 @@
+# Reusable: checks a PR title is a conventional commit, and that a task key at its end, like
+# `fix(modal-ui): close on escape (SPAR-12)`, names a task sparrow knows. Call it from an app's pr.yml:
+#   title:
+#     uses: andrew-personal-software/hawk/.github/workflows/pr-title.yml@main
+name: pr-title
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  title:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "$TITLE" | grep -Eq '^(feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert)(\([a-z0-9-]+\))?!?: .+' \
+            || { echo "PR title is not a conventional commit: $TITLE"; exit 1; }
+
+  # Runs on the mini PC so it can reach sparrow. Reads only the title; checks out no code.
+  task:
+    runs-on: hawk
+    steps:
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          re='\(([A-Z][A-Z0-9]*-[0-9]+)\)( \(#[0-9]+\))?$'
+          [[ $TITLE =~ $re ]] || { echo "no task key"; exit 0; }
+          key=${BASH_REMATCH[1]}
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:3417/api/tasks/$key")
+          case $code in
+            2??) echo "task $key exists" ;;
+            404) echo "PR title names $key, which sparrow does not know"; exit 1 ;;
+            *) echo "sparrow answered $code for $key"; exit 1 ;;
+          esac
