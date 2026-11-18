@@ -1,0 +1,3 @@
+# The podman network for postgres and the apps. Not reachable from off the box.
+[Network]
+NetworkName=hawk
