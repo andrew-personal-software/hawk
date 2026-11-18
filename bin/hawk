@@ -83,7 +83,10 @@ cmd_setup() {
     if [[ $unit == *.service ]]; then
       install -d "$dest.d"
       # Node exits 143 on the SIGTERM of a restart; that is not a failure.
-      put "$dest.d/hawk.conf" "$(printf '[Unit]\nOnFailure=hawk-notify@%%N.service\n\n[Service]\nSuccessExitStatus=143')" && changed+=("$unit")
+      # next start traps SIGTERM and waits on Caddy's keep-alive socket, so stop hit the 90 s timeout,
+      # got SIGKILL and fired OnFailure on every deploy (HAWK-12). NEXT_MANUAL_SIG_HANDLE lets Node exit
+      # at once. TimeoutStopSec caps the downtime if an app still hangs on stop.
+      put "$dest.d/hawk.conf" "$(printf '[Unit]\nOnFailure=hawk-notify@%%N.service\n\n[Service]\nSuccessExitStatus=143\nEnvironment=NEXT_MANUAL_SIG_HANDLE=true\nTimeoutStopSec=15')" && changed+=("$unit")
     fi
   done
   ((${#units[@]})) || die "no unit files in $src/deploy"
