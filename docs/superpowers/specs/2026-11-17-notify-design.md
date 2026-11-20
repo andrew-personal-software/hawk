@@ -171,7 +171,7 @@ There is **one worker loop per platform**. Each sends one delivery at a time, ol
 one platform never holds up another. Volume is low, so this stays far under Discord and Slack channel rate limits.
 
 Order is decided in one function, `nextDelivery(db, platform, now)`. Nothing else picks rows. This is the
-extension point for threads (see "Threads (later)").
+place threads keep their order (see "Threads").
 
 1. If the platform is `down`, its worker only sends probes (see "Platform state"). Otherwise it sends
    `nextDelivery()`.
