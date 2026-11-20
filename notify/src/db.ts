@@ -32,6 +32,10 @@ export function openDb(path: string): Db {
       platform TEXT PRIMARY KEY, status TEXT NOT NULL, reason TEXT, failing_since INTEGER,
       down_since INTEGER, next_probe_at INTEGER, alert_sent_at INTEGER, paused_until INTEGER
     );
+    CREATE TABLE IF NOT EXISTS threads (
+      thread TEXT NOT NULL, platform TEXT NOT NULL, target TEXT NOT NULL, ref TEXT NOT NULL,
+      PRIMARY KEY (thread, platform, target)
+    );
   `)
   return db
 }
@@ -95,8 +99,22 @@ function toRow(r: Record<string, unknown> | undefined): DeliveryRow | null {
   }
 }
 
+// A delivery waits while an older one in the same thread to the same target is queued, so the first makes the thread.
+const THREAD_FREE = ` AND (m.thread IS NULL OR NOT EXISTS (
+  SELECT 1 FROM deliveries o JOIN messages om ON om.id = o.message_id
+  WHERE om.thread = m.thread AND o.platform = d.platform AND o.target = d.target AND o.status = 'queued' AND o.id < d.id))`
+
 export function nextDelivery(db: Db, platform: string, now: number): DeliveryRow | null {
-  return toRow(db.prepare(DELIVERY_SELECT + ' AND d.next_at <= ? ORDER BY d.id LIMIT 1').get(platform, now))
+  return toRow(db.prepare(DELIVERY_SELECT + THREAD_FREE + ' AND d.next_at <= ? ORDER BY d.id LIMIT 1').get(platform, now))
+}
+
+export function getThread(db: Db, thread: string, platform: string, target: string): string | undefined {
+  const r = db.prepare('SELECT ref FROM threads WHERE thread = ? AND platform = ? AND target = ?').get(thread, platform, target)
+  return r ? (r.ref as string) : undefined
+}
+
+export function saveThread(db: Db, thread: string, platform: string, target: string, ref: string): void {
+  db.prepare('INSERT OR IGNORE INTO threads (thread, platform, target, ref) VALUES (?, ?, ?, ?)').run(thread, platform, target, ref)
 }
 
 export function oldestQueued(db: Db, platform: string): DeliveryRow | null {

@@ -11,7 +11,8 @@ export type Platform = {
   name: string
   label: string
   configured(env: Env): boolean
-  send(msg: Core, target: string, env: Env): Promise<Result>
+  /** `thread` is the ref saved from the thread's first `ok`; without it, `ok.ref` starts the thread. */
+  send(msg: Core, target: string, env: Env, thread?: string): Promise<Result>
 }
 export type Status = 'queued' | 'sent' | 'failed'
 export type DeliveryView = { platform: string; target: string; status: Status; attempts: number; error: string | null; sentAt: number | null }

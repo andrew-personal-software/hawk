@@ -108,22 +108,24 @@ export function makeDiscord(fetchImpl: typeof fetch = fetch, sleep: (ms: number)
     name: 'discord',
     label: 'Discord',
     configured: (env) => typeof env.DISCORD_BOT_TOKEN === 'string' && env.DISCORD_BOT_TOKEN !== '',
-    async send(msg, target, env) {
+    // In a thread, post into the thread channel. Else post to `target`, and with `msg.thread` start a thread on part 1.
+    async send(msg, target, env, thread) {
       let bodies: string[]
       try {
         bodies = render(msg).map((p) => JSON.stringify(p))
       } catch (err) {
         return { kind: 'permanent', error: `render: ${err instanceof Error ? err.message : String(err)}` }
       }
-      const url = `https://discord.com/api/v10/channels/${encodeURIComponent(target)}/messages`
+      const channel = `https://discord.com/api/v10/channels/${encodeURIComponent(thread ?? target)}/messages`
       let ref: string | undefined
       for (const [i, body] of bodies.entries()) {
         if (i > 0) await sleep(PART_GAP_MS)
-        const r = await post(url, body, env.DISCORD_BOT_TOKEN)
+        const r = await post(channel, body, env.DISCORD_BOT_TOKEN)
         if (r.kind !== 'ok') return r
         if (i === 0) ref = r.ref
       }
-      return { kind: 'ok', ref }
+      if (thread || !msg.thread || !ref) return { kind: 'ok', ref }
+      return post(`${channel}/${encodeURIComponent(ref)}/threads`, JSON.stringify({ name: msg.thread }), env.DISCORD_BOT_TOKEN)
     },
   }
 }

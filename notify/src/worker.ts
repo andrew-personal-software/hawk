@@ -1,6 +1,6 @@
 import type { Core, Env, Platform, Result } from './core.ts'
 import type { Alert } from './alert.ts'
-import { getState, saveState, markFailed, markRetry, markSent, nextDelivery, oldestQueued, queuedCount } from './db.ts'
+import { getState, getThread, saveState, saveThread, markFailed, markRetry, markSent, nextDelivery, oldestQueued, queuedCount } from './db.ts'
 import type { Db, DeliveryRow, PlatformState } from './db.ts'
 
 export type WorkerDeps = {
@@ -51,10 +51,13 @@ async function deliver(d: WorkerDeps, s: PlatformState, row: DeliveryRow, now: n
   // A send result after no_token is a new outage with a real reason, so it may alert again.
   const afterNoToken = wasDown && s.reason === 'no_token'
   const n = wasDown ? queuedCount(d.db, d.platform.name) : 0
-  const r = await d.platform.send(row.core, row.target, d.env)
+  const key = row.core.thread
+  const thread = key ? getThread(d.db, key, d.platform.name, row.target) : undefined
+  const r = await d.platform.send(row.core, row.target, d.env, thread)
   switch (r.kind) {
     case 'ok': {
       markSent(d.db, row.id, now, r.ref)
+      if (key && !thread && r.ref) saveThread(d.db, key, d.platform.name, row.target, r.ref)
       const downSince = s.downSince
       s.failingSince = null
       if (wasDown) Object.assign(s, { status: 'up', reason: null, downSince: null, nextProbeAt: null })

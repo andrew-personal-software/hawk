@@ -122,10 +122,10 @@ export function makeSlack(fetchImpl: typeof fetch = fetch, sleep: (ms: number) =
     name: 'slack',
     label: 'Slack',
     configured: (env) => typeof env.SLACK_BOT_TOKEN === 'string' && env.SLACK_BOT_TOKEN !== '',
-    async send(msg, target, env) {
+    async send(msg, target, env, thread) {
       let bodies: string[]
       try {
-        bodies = render(msg).map((p) => JSON.stringify({ channel: target, ...p }))
+        bodies = render(msg).map((p) => JSON.stringify({ channel: target, ...(thread ? { thread_ts: thread } : {}), ...p }))
       } catch (err) {
         return { kind: 'permanent', error: `render: ${err instanceof Error ? err.message : String(err)}` }
       }
