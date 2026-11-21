@@ -8,5 +8,6 @@ export default {
     'hawk.*': { discord: '1572365798125740062' },
     'sparrow.task.status': { discord: '1572365838026150099' },
     'budgie.daily': { discord: '1572365715011538994' },
+    'raptor.*': { discord: '1573566471802589194' },
   },
 } satisfies Routes

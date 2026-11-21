@@ -9,6 +9,7 @@ export type AppSpec = {
   envFiles?: string[]
   tmpfs?: string[]
   downtime?: boolean
+  notify?: boolean
 }
 export type App = { name: string; port: number; health: string; uid: number; gid: number; spec: AppSpec }
 export type AppState = { slot: Slot; version: string; previous: string | null; at: string }

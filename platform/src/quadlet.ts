@@ -1,4 +1,4 @@
-import { slotPort } from './config.ts'
+import { NOTIFY_VOLUME, slotPort } from './config.ts'
 import type { App, Slot } from './types.ts'
 
 export const QUADLET_DIR = '/etc/containers/systemd'
@@ -17,6 +17,7 @@ export function containerLines(app: App): string[] {
     `User=${app.uid}:${app.gid}`,
     'Network=hawk.network',
     `Volume=/var/lib/${app.name}:/data`,
+    ...(s.notify ? [`Volume=${NOTIFY_VOLUME}`] : []),
     `EnvironmentFile=/etc/hawk/db/${app.name}.env`,
     ...(s.envFiles ?? []).map((f) => `EnvironmentFile=${f}`),
     'Environment=PORT=3000',
@@ -33,8 +34,9 @@ function container(app: App, o: { name: string; image: string; command: string[]
   return [
     '[Unit]',
     `Description=${app.name} ${o.name}`,
-    'Wants=postgres.service',
-    'After=postgres.service',
+    // A notify app bind-mounts /run/hawk-notify, which hawk-notifyd creates.
+    `Wants=postgres.service${app.spec.notify ? ' hawk-notifyd.service' : ''}`,
+    `After=postgres.service${app.spec.notify ? ' hawk-notifyd.service' : ''}`,
     'OnFailure=hawk-notify@%N.service',
     '',
     '[Container]',

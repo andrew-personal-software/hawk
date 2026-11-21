@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { chmodSync, rmSync } from 'node:fs'
 import type { Db } from './db.ts'
 import { getMessage, insertMessage } from './db.ts'
 import { resolve } from './route.ts'
@@ -71,4 +72,14 @@ export function createServer(d: ServerDeps): http.Server {
       if (!res.headersSent) fail(res, 500, 'internal', 'internal error')
     }
   })
+}
+
+/** Listens on a unix socket for podman apps: removes a stale file first, then opens it to all (0666). */
+export async function listenSocket(server: http.Server, path: string): Promise<void> {
+  rmSync(path, { force: true })
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(path, () => { server.off('error', reject); resolve() })
+  })
+  chmodSync(path, 0o666)
 }

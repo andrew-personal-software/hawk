@@ -27,6 +27,9 @@ function record<T>(v: unknown, path: string, each: (v: unknown, path: string) =>
   return out
 }
 
+/** hawk-notifyd's unix socket dir, mounted into apps with `notify: true`. */
+export const NOTIFY_VOLUME = '/run/hawk-notify:/run/hawk-notify:ro'
+
 /** Checks deploy/hawk.json. Errors name the field path. */
 export function parseSpec(json: unknown, app: string): AppSpec {
   if (!isObj(json)) fail('spec', 'must be an object')
@@ -79,6 +82,10 @@ export function parseSpec(json: unknown, app: string): AppSpec {
       case 'downtime':
         if (typeof v !== 'boolean') fail('downtime', 'must be true or false')
         spec.downtime = v
+        break
+      case 'notify':
+        if (typeof v !== 'boolean') fail('notify', 'must be a boolean')
+        spec.notify = v
         break
       default:
         fail(k, 'unknown field')

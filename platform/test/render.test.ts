@@ -70,3 +70,23 @@ test('quote refuses control characters', async () => {
   const { quote } = await import('../src/quadlet.ts')
   assert.throws(() => quote('a\nb'), /control/)
 })
+
+test('notify mounts the notify socket dir read-only', async () => {
+  const { containerLines } = await import('../src/quadlet.ts')
+  const { runFlags } = await import('../src/release.ts')
+  const on: App = { ...app, spec: { notify: true } }
+  const off: App = { ...app, spec: {} }
+  assert.ok(containerLines(on).includes('Volume=/run/hawk-notify:/run/hawk-notify:ro'))
+  assert.ok(runFlags(on).join(' ').includes('-v /run/hawk-notify:/run/hawk-notify:ro'))
+  assert.ok(!containerLines(off).join('\n').includes('hawk-notify'))
+  assert.ok(!runFlags(off).join(' ').includes('hawk-notify'))
+})
+
+test('notify apps start after hawk-notifyd (the mount source must exist)', () => {
+  const u = renderUnits({ ...app, spec: { ...app.spec, notify: true } }, 'blue')
+  for (const f of [`${Q}/dodo-blue.container`, `${Q}/dodo-w.container`]) {
+    assert.match(u.get(f)!, /^After=postgres\.service hawk-notifyd\.service$/m)
+    assert.match(u.get(f)!, /^Wants=postgres\.service hawk-notifyd\.service$/m)
+  }
+  assert.doesNotMatch(renderUnits(app, 'blue').get(`${Q}/dodo-blue.container`)!, /hawk-notifyd/)
+})
