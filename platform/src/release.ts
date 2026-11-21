@@ -1,6 +1,6 @@
 import { backupApp } from './backup.ts'
 import { renderSite } from './caddy.ts'
-import { parseSpec, slotPort, VERSION } from './config.ts'
+import { NOTIFY_VOLUME, parseSpec, slotPort, VERSION } from './config.ts'
 import { dbEnvPath } from './db.ts'
 import { renderUnits } from './quadlet.ts'
 import type { App, AppState, Slot, Sys } from './types.ts'
@@ -47,7 +47,7 @@ export async function writeUnits(app: App, live: Slot, sys: Sys): Promise<void> 
 export function runFlags(app: App): string[] {
   const s = app.spec
   return [
-    '--rm', '--network', 'hawk', '--user', `${app.uid}:${app.gid}`, '-v', `/var/lib/${app.name}:/data`,
+    '--rm', '--network', 'hawk', '--user', `${app.uid}:${app.gid}`, '-v', `/var/lib/${app.name}:/data`, ...(s.notify ? ['-v', NOTIFY_VOLUME] : []),
     '--env-file', dbEnvPath(app.name), ...(s.envFiles ?? []).flatMap((f) => ['--env-file', f]),
     '-e', 'PORT=3000', ...Object.entries(s.env ?? {}).flatMap(([k, v]) => ['-e', `${k}=${v}`]),
     '--read-only', '--tmpfs', '/tmp', ...(s.tmpfs ?? []).flatMap((t) => ['--tmpfs', t]),

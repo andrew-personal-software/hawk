@@ -8,6 +8,10 @@ OnFailure=hawk-notify@%N.service
 [Service]
 DynamicUser=true
 StateDirectory=hawk-notify
+# /run/hawk-notify/notify.sock for podman apps. Preserve keeps the dir inode, so app bind mounts stay valid.
+RuntimeDirectory=hawk-notify
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
 EnvironmentFile=/etc/hawk/hawk.env
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning /opt/hawk/notify/src/main.ts
 Restart=on-failure

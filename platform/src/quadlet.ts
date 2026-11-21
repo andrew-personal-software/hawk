@@ -1,4 +1,4 @@
-import { slotPort } from './config.ts'
+import { NOTIFY_VOLUME, slotPort } from './config.ts'
 import type { App, Slot } from './types.ts'
 
 export const QUADLET_DIR = '/etc/containers/systemd'
@@ -17,6 +17,7 @@ export function containerLines(app: App): string[] {
     `User=${app.uid}:${app.gid}`,
     'Network=hawk.network',
     `Volume=/var/lib/${app.name}:/data`,
+    ...(s.notify ? [`Volume=${NOTIFY_VOLUME}`] : []),
     `EnvironmentFile=/etc/hawk/db/${app.name}.env`,
     ...(s.envFiles ?? []).map((f) => `EnvironmentFile=${f}`),
     'Environment=PORT=3000',

@@ -54,3 +54,8 @@ test('parseSpec rejects control characters in every string', () => {
     [{ envFiles: ['/etc/dodo/a\n.env'] }, /envFiles\[0\]/],
   ] as const) assert.throws(() => parseSpec(json, 'dodo'), re)
 })
+
+test('parseSpec reads notify', () => {
+  assert.deepEqual(parseSpec({ notify: true }, 'dodo'), { notify: true })
+  assert.throws(() => parseSpec({ notify: 'yes' }, 'dodo'), /notify: must be a boolean/)
+})

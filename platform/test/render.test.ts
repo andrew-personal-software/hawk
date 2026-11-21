@@ -70,3 +70,14 @@ test('quote refuses control characters', async () => {
   const { quote } = await import('../src/quadlet.ts')
   assert.throws(() => quote('a\nb'), /control/)
 })
+
+test('notify mounts the notify socket dir read-only', async () => {
+  const { containerLines } = await import('../src/quadlet.ts')
+  const { runFlags } = await import('../src/release.ts')
+  const on: App = { ...app, spec: { notify: true } }
+  const off: App = { ...app, spec: {} }
+  assert.ok(containerLines(on).includes('Volume=/run/hawk-notify:/run/hawk-notify:ro'))
+  assert.ok(runFlags(on).join(' ').includes('-v /run/hawk-notify:/run/hawk-notify:ro'))
+  assert.ok(!containerLines(off).join('\n').includes('hawk-notify'))
+  assert.ok(!runFlags(off).join(' ').includes('hawk-notify'))
+})

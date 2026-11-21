@@ -47,3 +47,19 @@ test('no known platform still inserts a sent message', async () => {
   assert.ok(lines.includes('notify: no known platform for x.y'))
   s.close()
 })
+
+test('listenSocket replaces a stale file and makes the socket 0666', async () => {
+  const { mkdtempSync, writeFileSync, statSync } = await import('node:fs')
+  const { tmpdir } = await import('node:os')
+  const { listenSocket } = await import('../src/server.ts')
+  const http = await import('node:http')
+  const sock = `${mkdtempSync(`${tmpdir()}/hn-`)}/notify.sock`
+  writeFileSync(sock, 'stale')
+  const s = createServer({ db: openDb(':memory:'), routes, known: new Set(['slack']), now: Date.now, version: 'test', log: () => {} })
+  await listenSocket(s, sock)
+  try {
+    assert.equal(statSync(sock).mode & 0o777, 0o666)
+    const status = await new Promise<number>((r) => http.get({ socketPath: sock, path: '/v1/messages/none' }, (res) => { res.resume(); r(res.statusCode!) }))
+    assert.equal(status, 404)
+  } finally { s.close() }
+})

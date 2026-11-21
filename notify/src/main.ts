@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import routes from '../routes.ts'
 import { openDb, prune } from './db.ts'
-import { createServer } from './server.ts'
+import { createServer, listenSocket } from './server.ts'
 import { startWorker } from './worker.ts'
 import { makeAlert } from './alert.ts'
 import { platforms } from './platforms/index.ts'
@@ -31,11 +31,20 @@ function main(): void {
   prune(db, Date.now())
   const timer = setInterval(() => prune(db, Date.now()), 86_400_000)
   server.listen(port, '127.0.0.1', () => log(`notify: listening on 127.0.0.1:${port}`))
+  // systemd sets RUNTIME_DIRECTORY (/run/hawk-notify); podman apps with `notify: true` mount it.
+  const sockDir = process.env.RUNTIME_DIRECTORY
+  const sockServer = sockDir ? createServer({ db, routes, known: new Set(platforms.map((p) => p.name)), now: Date.now, version: readVersion(), log }) : null
+  if (sockDir && sockServer) {
+    const sock = path.join(sockDir, 'notify.sock')
+    listenSocket(sockServer, sock).then(() => log(`notify: listening on ${sock}`), (e) => { log(`notify: socket: ${e.message}`); process.exit(1) })
+  }
 
   const shutdown = async () => {
     clearInterval(timer)
     server.close()
     server.closeAllConnections()
+    sockServer?.close()
+    sockServer?.closeAllConnections()
     await Promise.all(workers.map((w) => w.stop()))
     db.close()
     process.exit(0)
