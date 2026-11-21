@@ -34,8 +34,9 @@ function container(app: App, o: { name: string; image: string; command: string[]
   return [
     '[Unit]',
     `Description=${app.name} ${o.name}`,
-    'Wants=postgres.service',
-    'After=postgres.service',
+    // A notify app bind-mounts /run/hawk-notify, which hawk-notifyd creates.
+    `Wants=postgres.service${app.spec.notify ? ' hawk-notifyd.service' : ''}`,
+    `After=postgres.service${app.spec.notify ? ' hawk-notifyd.service' : ''}`,
     'OnFailure=hawk-notify@%N.service',
     '',
     '[Container]',
