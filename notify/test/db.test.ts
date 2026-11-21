@@ -58,3 +58,14 @@ test('prune deletes only finished messages older than 30 days', () => {
   assert.equal(prune(db, 31 * day), 1)
   assert.equal(getMessage(db, old), null); assert.ok(getMessage(db, stuck))
 })
+test('nextDelivery: a thread waits for its older queued delivery to the same target', () => {
+  const db = openDb(':memory:')
+  insertMessage(db, c({ title: '1', thread: 'H' }), 'v1', { slack: '#a' }, 1)
+  insertMessage(db, c({ title: '2', thread: 'H' }), 'v1', { slack: '#a' }, 2)
+  insertMessage(db, c({ title: '3', thread: 'H' }), 'v1', { slack: '#b' }, 3)
+  const d1 = nextDelivery(db, 'slack', 10)!
+  markRetry(db, d1.id, 100, 'x')
+  assert.equal(nextDelivery(db, 'slack', 10)!.core.title, '3')
+  markSent(db, d1.id, 10, 'ts')
+  assert.equal(nextDelivery(db, 'slack', 10)!.core.title, '2')
+})

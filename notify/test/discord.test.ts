@@ -138,3 +138,12 @@ test('routes guard: every discord target is a real channel id (fails until paste
   for (const t of [routes.default, ...Object.values(routes.routes)] as Record<string, string>[])
     if (t.discord !== undefined) assert.match(t.discord, /^\d{17,20}$/, `discord target "${t.discord}" is not a channel id`)
 })
+test('send: thread key starts a thread on part 1, a saved thread ref posts into it', async () => {
+  const urls: string[] = []
+  const d = makeDiscord(async (url) => { urls.push(String(url)); return Response.json({ id: '9' }) })
+  const env = { DISCORD_BOT_TOKEN: 'x' }
+  assert.deepEqual(await d.send(msg({ thread: 'H-1' }), '1', env), { kind: 'ok', ref: '9' })
+  assert.deepEqual(await d.send(msg({ thread: 'H-1' }), '1', env, '9'), { kind: 'ok', ref: '9' })
+  const api = 'https://discord.com/api/v10/channels'
+  assert.deepEqual(urls, [`${api}/1/messages`, `${api}/1/messages/9/threads`, `${api}/9/messages`])
+})

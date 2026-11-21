@@ -171,7 +171,7 @@ There is **one worker loop per platform**. Each sends one delivery at a time, ol
 one platform never holds up another. Volume is low, so this stays far under Discord and Slack channel rate limits.
 
 Order is decided in one function, `nextDelivery(db, platform, now)`. Nothing else picks rows. This is the
-extension point for threads (see "Threads (later)").
+place threads keep their order (see "Threads").
 
 1. If the platform is `down`, its worker only sends probes (see "Platform state"). Otherwise it sends
    `nextDelivery()`.
@@ -226,17 +226,19 @@ Platform tokens (`DISCORD_BOT_TOKEN`, `SLACK_BOT_TOKEN`) are optional, so `hawk-
 `no_token`: its deliveries queue, and the same one-email rule sends "hawk: <Platform> is not set up". Adding the
 token and restarting `hawk-notifyd` turns it on and its queue drains.
 
-## Threads (later)
+## Threads
 
-`thread` is accepted, validated and stored in `messages.thread`, but not used yet. To add threads later:
+`thread` groups messages. The `threads(thread, platform, target, ref)` table holds the ref saved from the
+first `ok` for that thread and target.
 
-- add a `threads(thread, platform, target, ref)` table;
-- in `nextDelivery()`, skip a delivery whose message's `thread` has an older delivery to the same target still
-  `queued`, so the first one creates the thread;
-- in each adapter, post into the thread when a `threads` row exists (Slack: `thread_ts = ref`), and save the
-  `ref` from `ok` when not.
+- `nextDelivery()` skips a delivery while an older delivery in the same `thread` to the same target is still
+  `queued`. So the first message makes the thread, and the thread stays in order.
+- **Discord**: the first message posts to the channel, then starts a thread on part 1
+  (`POST /channels/{id}/messages/{msg}/threads`, name = the thread key). The ref is the thread channel id.
+  Later messages post into it. The bot needs Create Public Threads and Send Messages in Threads.
+- **Slack**: the ref is the first message `ts`. Later messages send `thread_ts = ref`.
 
-Nothing else changes: not the API, the tables above, or the outage logic.
+The API, the other tables and the outage logic do not change.
 
 ## Rendering
 
@@ -263,7 +265,7 @@ fenced code, `[text](url)`, bare URLs, `-`/`*`/`1.` lists, `>` quotes. Anything 
 
 ## Storage
 
-`/var/lib/hawk-notify/notify.db` (`node:sqlite`, WAL). Tables: `messages`, `deliveries`, `platform_state`.
+`/var/lib/hawk-notify/notify.db` (`node:sqlite`, WAL). Tables: `messages`, `deliveries`, `platform_state`, `threads`.
 Once a day, delete messages older than 30 days whose deliveries are all `sent` or `failed` (and their deliveries).
 
 ## Files and install
