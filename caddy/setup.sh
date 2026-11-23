@@ -2,6 +2,8 @@
 # Serves https://<name>.$DOMAIN to the tailnet only, through Caddy on :443. Run as root; safe to re-run:
 #   sudo [DOMAIN=andrewminghanjiang.com] caddy/setup.sh <name> <upstream>
 #   <upstream> is host:port to proxy, or an absolute dir to serve as static files
+#   AUTH=authentik puts the site behind Authentik (forward auth on 127.0.0.1:9000). Caddy adds the header
+#   X-<Name>-Proxy-Secret from <NAME>_PROXY_SECRET in /etc/caddy/caddy.env, so the app trusts only Caddy.
 #   hawk setup runs it for each app
 # Adds Caddy's vercel DNS plugin, the base Caddyfile bound to the tailscale IPs, the caddy.service
 # drop-in, and /etc/caddy/sites/<name>.caddy, then points <name>'s A/AAAA records at the tailscale IPs.
@@ -25,6 +27,31 @@ for cmd in caddy go tailscale node curl systemctl apt-mark; do
 done
 HOST=$NAME.$DOMAIN
 changed=0
+
+# The site body for an app behind Authentik. /api/version stays open for uptime checks.
+auth_site() {
+  local title secret
+  title=$(printf %s "$NAME" | awk '{print toupper(substr($0, 1, 1)) substr($0, 2)}')
+  secret=$(printf %s "$NAME" | tr a-z A-Z)_PROXY_SECRET
+  grep -q "^$secret=." "$ENV_FILE" 2>/dev/null || die "no $secret in $ENV_FILE. Add it (same value as the app's env file), then re-run"
+  cat <<EOF
+route {
+		request_header -X-Authentik-Username
+		request_header -X-Authentik-Groups
+		request_header -X-Authentik-Email
+		request_header -X-$title-Proxy-Secret
+		reverse_proxy /outpost.goauthentik.io/* 127.0.0.1:9000
+		@gated not path /api/version
+		forward_auth @gated 127.0.0.1:9000 {
+			uri /outpost.goauthentik.io/auth/caddy
+			copy_headers X-Authentik-Username X-Authentik-Groups X-Authentik-Email
+			trusted_proxies private_ranges
+		}
+		request_header X-$title-Proxy-Secret {env.$secret}
+		reverse_proxy $UPSTREAM
+	}
+EOF
+}
 
 # Writes $2 to $1 if it differs, and notes that Caddy needs a restart.
 put() {
@@ -76,7 +103,8 @@ step "caddy: /etc/caddy/Caddyfile /etc/caddy/sites/$NAME.caddy $DROPIN"
 grep -q 'caddy/setup.sh' /etc/caddy/Caddyfile 2>/dev/null || cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.orig 2>/dev/null || true
 install -d /etc/caddy/sites "$(dirname "$DROPIN")"
 put /etc/caddy/Caddyfile "$(sed "s|@TS_IPS@|$IP4 $IP6|" "$HERE/Caddyfile")"
-if [[ $UPSTREAM == /* ]]; then site="root * $UPSTREAM"$'\n\t'"file_server"; else site="reverse_proxy $UPSTREAM"; fi
+if [[ ${AUTH:-} == authentik ]]; then site=$(auth_site)
+elif [[ $UPSTREAM == /* ]]; then site="root * $UPSTREAM"$'\n\t'"file_server"; else site="reverse_proxy $UPSTREAM"; fi
 put "/etc/caddy/sites/$NAME.caddy" "$(printf '%s {\n\timport tailnet\n\t%s\n}' "$HOST" "$site")"
 if [[ ! -f $DROPIN ]] || [[ $(cat "$DROPIN") != "$(cat "$HERE/caddy.conf")" ]]; then
   cp "$HERE/caddy.conf" "$DROPIN"
