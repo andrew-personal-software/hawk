@@ -32,7 +32,7 @@ changed=0
 auth_site() {
   local title secret
   title=$(printf %s "$NAME" | awk '{print toupper(substr($0, 1, 1)) substr($0, 2)}')
-  secret=$(printf %s "$NAME" | tr a-z A-Z)_PROXY_SECRET
+  secret=$(printf %s "$NAME" | tr '[:lower:]' '[:upper:]')_PROXY_SECRET
   grep -q "^$secret=." "$ENV_FILE" 2>/dev/null || die "no $secret in $ENV_FILE. Add it (same value as the app's env file), then re-run"
   cat <<EOF
 route {
