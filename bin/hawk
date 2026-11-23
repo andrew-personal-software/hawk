@@ -118,7 +118,7 @@ cmd_setup() {
     done
   fi
 
-  "$HAWK/caddy/setup.sh" "$APP" "127.0.0.1:$PORT"
+  AUTH="${AUTH:-}" "$HAWK/caddy/setup.sh" "$APP" "127.0.0.1:$PORT"
   echo "Done. $APP is at https://$APP.$DOMAIN. The first deploy starts it."
 }
 
