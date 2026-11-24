@@ -30,7 +30,9 @@ jobs:
           re='\(([A-Z][A-Z0-9]*-[0-9]+)\)( \(#[0-9]+\))?$'
           [[ $TITLE =~ $re ]] || { echo "no task key"; exit 0; }
           key=${BASH_REMATCH[1]}
-          code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:3417/api/tasks/$key")
+          # Sparrow needs hawk's token (hawk-runner can read it). Sent on stdin so it stays out of the process list.
+          code=$(printf 'Authorization: Bearer %s\n' "$(cat /etc/hawk/sparrow-hawk-token)" |
+            curl -sS -o /dev/null -w '%{http_code}' -H @- "http://127.0.0.1:3417/api/tasks/$key")
           case $code in
             2??) echo "task $key exists" ;;
             404) echo "PR title names $key, which sparrow does not know"; exit 1 ;;
