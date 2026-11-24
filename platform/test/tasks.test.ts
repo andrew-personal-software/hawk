@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { commitSubjects, linkTasks, taskKeys } from '../src/tasks.ts'
+import { commitSubjects, linkTasks, SPARROW_TOKEN_FILE, taskKeys } from '../src/tasks.ts'
 import { fakeSys } from './fake.ts'
 
 test('taskKeys', () =>
@@ -45,4 +45,17 @@ test('linkTasks 404 → unknown, no setStatus', async () => {
 test('linkTasks throws on other errors', async () => {
   const f = fakeSys({ post: async () => ({ status: 500, body: 'no' }) })
   await assert.rejects(linkTasks({ ...base, keys: ['SPAR-1'], ok: true }, f.sys), /500 for SPAR-1/)
+})
+
+test('linkTasks sends the token from SPARROW_TOKEN_FILE', async () => {
+  const f = fakeSys()
+  f.files.set(SPARROW_TOKEN_FILE, 't\n')
+  await linkTasks({ ...base, keys: ['SPAR-1'], ok: true }, f.sys)
+  assert.deepEqual(f.posts.map((p) => p.headers), [{ authorization: 'Bearer t' }, { authorization: 'Bearer t' }])
+})
+
+test('linkTasks without a token file sends no headers', async () => {
+  const f = fakeSys()
+  await linkTasks({ ...base, keys: ['SPAR-1'], ok: false }, f.sys)
+  assert.deepEqual(f.posts.map((p) => p.headers), [undefined])
 })

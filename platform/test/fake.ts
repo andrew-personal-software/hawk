@@ -9,7 +9,7 @@ export function fakeSys(o: Partial<Sys> & { answer?: (c: Call) => string } = {})
   const calls: Call[] = []
   const files = new Map<string, string>()
   const log: string[] = []
-  const posts: { url: string; json: unknown }[] = []
+  const posts: { url: string; json: unknown; headers?: Record<string, string> }[] = []
   const sys: Sys = {
     async run(cmd, args, opts) {
       const c = { cmd, args, opts }
@@ -17,7 +17,7 @@ export function fakeSys(o: Partial<Sys> & { answer?: (c: Call) => string } = {})
       return o.answer ? o.answer(c) : ''
     },
     async get(url) { log.push(`get ${url}`); return { status: 200, body: '{}' } },
-    async post(url, json) { posts.push({ url, json }); log.push(`post ${url}`); return { status: 200, body: '{}' } },
+    async post(url, json, headers) { posts.push({ url, json, ...(headers && { headers }) }); log.push(`post ${url}`); return { status: 200, body: '{}' } },
     read: (p) => files.get(p) ?? null,
     lstat: (p) => (files.has(p) ? { file: true, uid: RUNNER_UID } : null),
     write(p, t) { log.push(`write ${p}`); if (files.get(p) === t) return false; files.set(p, t); return true },
