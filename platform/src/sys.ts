@@ -35,7 +35,7 @@ export const realSys: Sys = {
     })
   },
   get: (url) => request(url, {}, 2000),
-  post: (url, json) => request(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(json) }, 5000),
+  post: (url, json, headers) => request(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(json) }, 5000),
   read(p) {
     try { return fs.readFileSync(p, 'utf8') } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e }
   },

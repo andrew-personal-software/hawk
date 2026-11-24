@@ -26,6 +26,9 @@ export async function commitSubjects(version: string, sys: Sys): Promise<string[
 
 const lines = (s: string) => s.split('\n').filter(Boolean)
 
+/** Sparrow's SPARROW_HAWK_TOKEN. Its own file (root:hawk-runner 0640): hawk-runner cannot read hawk.env. */
+export const SPARROW_TOKEN_FILE = '/etc/hawk/sparrow-hawk-token'
+
 /** Comments the deploy on each task; on success also sets it done. Keys sparrow does not know go in `unknown`. */
 export async function linkTasks(
   o: { keys: string[]; app: string; version: string; url: string; ok: boolean; error?: string },
@@ -34,11 +37,13 @@ export async function linkTasks(
 ): Promise<{ updated: string[]; unknown: string[] }> {
   const updated: string[] = []
   const unknown: string[] = []
+  const token = sys.read(SPARROW_TOKEN_FILE)?.trim()
+  const headers = token ? { authorization: `Bearer ${token}` } : undefined
   const body = o.ok ? `${o.app} ${o.version} deployed: ${o.url}` : `${o.app} ${o.version} deploy failed: ${o.error ?? 'unknown error'}`
   for (const key of o.keys) {
     const url = `${base}/api/tasks/${key}`
     const send = async (op: unknown) => {
-      const r = await sys.post(url, { op })
+      const r = await sys.post(url, { op }, headers)
       if (r.status === 404) return false
       if (r.status < 200 || r.status > 299) throw new Error(`sparrow answered ${r.status} for ${key}: ${r.body.slice(0, 200)}`)
       return true

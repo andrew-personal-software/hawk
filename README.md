@@ -48,6 +48,9 @@ The first run makes `/etc/hawk/hawk.env` from `~/hawk/hawk.env` (git-ignored) if
 
   The Slack adapter is still in the code: add `slack:` targets and `SLACK_BOT_TOKEN` to use it.
 
+`hawk tasks` runs as `hawk-runner`, which cannot read `hawk.env`. It reads sparrow's `SPARROW_HAWK_TOKEN` from its own file:
+`sudo install -m 0640 -g hawk-runner /dev/null /etc/hawk/sparrow-hawk-token`, then put the value in it (same as `/etc/sparrow/sparrow.env`).
+
 ## Send a message
 
 ```sh
